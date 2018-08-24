@@ -31,6 +31,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.internal.verification.VerificationModeFactory.times;
 
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ListMultimap;
@@ -41,6 +42,7 @@ import io.grpc.internal.ServerStreamListener;
 import io.grpc.internal.StatsTraceContext;
 import io.grpc.internal.StreamListener;
 import io.grpc.internal.TransportTracer;
+import io.grpc.netty.WriteQueue.AbstractQueuedCommand;
 import io.netty.buffer.EmptyByteBuf;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.handler.codec.http2.DefaultHttp2Headers;
@@ -48,6 +50,7 @@ import io.netty.util.AsciiString;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Queue;
 import org.junit.Before;
 import org.junit.Test;
@@ -143,7 +146,7 @@ public class NettyServerStreamTest extends NettyStreamTestBase<NettyServerStream
   }
 
   @Test
-  public void closeBeforeClientHalfCloseShouldSucceed() throws Exception {
+  public void closeBeforeClientHalfCloseShouldSucceedWithResetStream() throws Exception {
     ListMultimap<CharSequence, CharSequence> expectedHeaders =
         ImmutableListMultimap.copyOf(new DefaultHttp2Headers()
             .status(new AsciiString("200"))
@@ -152,15 +155,21 @@ public class NettyServerStreamTest extends NettyStreamTestBase<NettyServerStream
 
     stream().close(Status.OK, new Metadata());
 
-    ArgumentCaptor<SendResponseHeadersCommand> sendHeadersCap =
-        ArgumentCaptor.forClass(SendResponseHeadersCommand.class);
-    verify(writeQueue).enqueue(sendHeadersCap.capture(), eq(true));
-    SendResponseHeadersCommand sendHeaders = sendHeadersCap.getValue();
+    ArgumentCaptor<AbstractQueuedCommand> sendHeadersCap =
+        ArgumentCaptor.forClass(AbstractQueuedCommand.class);
+    verify(writeQueue, times(2)).enqueue(sendHeadersCap.capture(), eq(true));
+    List<AbstractQueuedCommand> commands = sendHeadersCap.getAllValues();
+    SendResponseHeadersCommand sendHeaders = (SendResponseHeadersCommand) commands.get(0);
     assertThat(sendHeaders.stream()).isSameAs(stream.transportState());
     assertThat(ImmutableListMultimap.copyOf(sendHeaders.headers()))
         .containsExactlyEntriesIn(expectedHeaders);
     assertThat(sendHeaders.endOfStream()).isTrue();
     verifyZeroInteractions(serverListener);
+
+    CancelServerStreamCommand cancelCommand = (CancelServerStreamCommand) commands.get(1);
+    assertThat(cancelCommand.reason().getCode()).isSameAs(Status.CANCELLED.getCode());
+    assertThat(cancelCommand.reason().getDescription()).isEqualTo("NO ERROR");
+    assertThat(cancelCommand.stream()).isSameAs(stream.transportState());
 
     // Sending complete. Listener gets closed()
     stream().transportState().complete();
@@ -259,17 +268,24 @@ public class NettyServerStreamTest extends NettyStreamTestBase<NettyServerStream
             .status(new AsciiString("200"))
             .set(new AsciiString("content-type"), new AsciiString("application/grpc"))
             .set(new AsciiString("grpc-status"), new AsciiString("0")));
-    ArgumentCaptor<SendResponseHeadersCommand> cmdCap =
-        ArgumentCaptor.forClass(SendResponseHeadersCommand.class);
+    ArgumentCaptor<AbstractQueuedCommand> cmdCap =
+        ArgumentCaptor.forClass(AbstractQueuedCommand.class);
 
     stream().close(Status.OK, new Metadata());
 
-    verify(writeQueue).enqueue(cmdCap.capture(), eq(true));
-    SendResponseHeadersCommand cmd = cmdCap.getValue();
-    assertThat(cmd.stream()).isSameAs(stream.transportState());
-    assertThat(ImmutableListMultimap.copyOf(cmd.headers()))
+    verify(writeQueue, times(2)).enqueue(cmdCap.capture(), eq(true));
+    List<AbstractQueuedCommand> cmds = cmdCap.getAllValues();
+    SendResponseHeadersCommand sendResponseHeadersCommand =
+        (SendResponseHeadersCommand) cmds.get(0);
+    assertThat(sendResponseHeadersCommand.stream()).isSameAs(stream.transportState());
+    assertThat(ImmutableListMultimap.copyOf(sendResponseHeadersCommand.headers()))
         .containsExactlyEntriesIn(expectedHeaders);
-    assertThat(cmd.endOfStream()).isTrue();
+    assertThat(sendResponseHeadersCommand.endOfStream()).isTrue();
+
+    CancelServerStreamCommand cancelCommand = (CancelServerStreamCommand) cmds.get(1);
+    assertThat(cancelCommand.reason().getCode()).isSameAs(Status.CANCELLED.getCode());
+    assertThat(cancelCommand.reason().getDescription()).isEqualTo("NO ERROR");
+    assertThat(cancelCommand.stream()).isSameAs(stream.transportState());
   }
 
   @Test

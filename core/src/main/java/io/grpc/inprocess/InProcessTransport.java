@@ -419,8 +419,13 @@ final class InProcessTransport implements ServerTransport, ConnectionClientTrans
         // clientStreamListener.closed can trigger clientStream.cancel (see code in
         // ClientCalls.blockingUnaryCall), which may race with clientStream.serverClosed as both are
         // calling internalCancel().
+        // boolean clientStreamClosed = clientStream.isHalfClosed();
+        // if (!clientStreamClosed) {
+        //   clientStream.cancel(Status.CANCELLED.withDescription("NO ERROR"));
+        //   clientStream.serverClosed(Status.OK, status);
+        // } else {
         clientStream.serverClosed(Status.OK, status);
-
+        // }
         Status clientStatus = stripCause(status);
         synchronized (this) {
           if (closed) {
@@ -434,6 +439,7 @@ final class InProcessTransport implements ServerTransport, ConnectionClientTrans
             clientNotifyStatus = clientStatus;
             clientNotifyTrailers = trailers;
           }
+
         }
 
         streamClosed();
@@ -511,6 +517,7 @@ final class InProcessTransport implements ServerTransport, ConnectionClientTrans
       private boolean closed;
       @GuardedBy("this")
       private int outboundSeqNo;
+      private boolean halfClosed = false;
 
       InProcessClientStream(CallOptions callOptions, Metadata headers) {
         statsTraceCtx = StatsTraceContext.newClientContext(callOptions, headers);
@@ -590,6 +597,10 @@ final class InProcessTransport implements ServerTransport, ConnectionClientTrans
         return serverRequested > 0;
       }
 
+      public synchronized boolean isHalfClosed() {
+        return closed || halfClosed || serverNotifyHalfClose;
+      }
+
       // Must be thread-safe for shutdownNow()
       @Override
       public void cancel(Status reason) {
@@ -630,6 +641,7 @@ final class InProcessTransport implements ServerTransport, ConnectionClientTrans
           return;
         }
         if (serverReceiveQueue.isEmpty()) {
+          halfClosed = true;
           serverStreamListener.halfClosed();
         } else {
           serverNotifyHalfClose = true;

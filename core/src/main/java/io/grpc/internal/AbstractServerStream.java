@@ -135,6 +135,10 @@ public abstract class AbstractServerStream extends AbstractStream
       // guarantees with respect to here.
       transportState().setClosedStatus(status);
       abstractServerStreamSink().writeTrailers(trailers, headersSent, status);
+
+      if (status.isOk() && !transportState().isEndOfStream()) {
+        abstractServerStreamSink().cancel(Status.CANCELLED.withDescription("NO ERROR"));
+      }
     }
   }
 
@@ -331,12 +335,15 @@ public abstract class AbstractServerStream extends AbstractStream
       // not initiate the termination.
       Preconditions.checkState(!newStatus.isOk() || closedStatus != null);
       if (!listenerClosed) {
-        if (!newStatus.isOk()) {
+        // reset stream due to server early close is considered okay.
+        boolean serverEndsEarly = newStatus.getCode() == Status.CANCELLED.getCode()
+                 && "NO ERROR".equals(newStatus.getDescription());
+        if (!newStatus.isOk() && !serverEndsEarly) {
           statsTraceCtx.streamClosed(newStatus);
           getTransportTracer().reportStreamClosed(false);
         } else {
           statsTraceCtx.streamClosed(closedStatus);
-          getTransportTracer().reportStreamClosed(closedStatus.isOk());
+          getTransportTracer().reportStreamClosed(closedStatus.isOk() || serverEndsEarly);
         }
         listenerClosed = true;
         onStreamDeallocated();
@@ -350,6 +357,10 @@ public abstract class AbstractServerStream extends AbstractStream
     private void setClosedStatus(Status closeStatus) {
       Preconditions.checkState(closedStatus == null, "closedStatus can only be set once");
       closedStatus = closeStatus;
+    }
+
+    public boolean isEndOfStream() {
+      return endOfStream;
     }
   }
 }
