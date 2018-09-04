@@ -1,4 +1,5 @@
 description = "gRPC: OkHttp"
+
 dependencies {
     compile project(':grpc-core'),
             libraries.okhttp,

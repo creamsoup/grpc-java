@@ -38,7 +38,7 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class InteropInstrumentationTest {
-  private static final int TIMEOUT_SECONDS = 10;
+  private static final int TIMEOUT_SECONDS = 60;
   private static final String LOG_TAG = "GrpcInteropInstrumentationTest";
 
   private String host;
@@ -131,6 +131,6 @@ public class InteropInstrumentationTest {
             testCase)
         .execute();
     String result = resultFuture.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-    assertEquals(testCase + " failed", result, InteropTask.SUCCESS_MESSAGE);
+    assertEquals(testCase + " failed", InteropTask.SUCCESS_MESSAGE, result);
   }
 }
