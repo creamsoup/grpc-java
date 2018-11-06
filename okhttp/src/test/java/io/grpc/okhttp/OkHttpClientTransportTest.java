@@ -16,37 +16,6 @@
 
 package io.grpc.okhttp;
 
-import static com.google.common.base.Charsets.UTF_8;
-import static com.google.common.truth.Truth.assertThat;
-import static io.grpc.internal.ClientStreamListener.RpcProgress.PROCESSED;
-import static io.grpc.internal.ClientStreamListener.RpcProgress.REFUSED;
-import static io.grpc.internal.GrpcUtil.DEFAULT_MAX_MESSAGE_SIZE;
-import static io.grpc.okhttp.Headers.CONTENT_TYPE_HEADER;
-import static io.grpc.okhttp.Headers.METHOD_HEADER;
-import static io.grpc.okhttp.Headers.SCHEME_HEADER;
-import static io.grpc.okhttp.Headers.TE_HEADER;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyBoolean;
-import static org.mockito.Matchers.anyInt;
-import static org.mockito.Matchers.eq;
-import static org.mockito.Matchers.isA;
-import static org.mockito.Matchers.same;
-import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.timeout;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.mockito.Mockito.verifyZeroInteractions;
-
 import com.google.common.base.Stopwatch;
 import com.google.common.base.Supplier;
 import com.google.common.base.Ticker;
@@ -54,55 +23,16 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.SettableFuture;
-import io.grpc.CallOptions;
+import io.grpc.*;
 import io.grpc.InternalChannelz.SocketStats;
 import io.grpc.InternalChannelz.TransportStats;
-import io.grpc.InternalInstrumented;
-import io.grpc.InternalStatus;
-import io.grpc.Metadata;
-import io.grpc.MethodDescriptor;
 import io.grpc.MethodDescriptor.MethodType;
-import io.grpc.Status;
 import io.grpc.Status.Code;
-import io.grpc.StatusException;
-import io.grpc.internal.AbstractStream;
-import io.grpc.internal.ClientStreamListener;
-import io.grpc.internal.ClientTransport;
-import io.grpc.internal.GrpcUtil;
-import io.grpc.internal.ManagedClientTransport;
-import io.grpc.internal.ProxyParameters;
-import io.grpc.internal.TransportTracer;
+import io.grpc.internal.*;
 import io.grpc.okhttp.OkHttpClientTransport.ClientFrameHandler;
 import io.grpc.okhttp.internal.ConnectionSpec;
-import io.grpc.okhttp.internal.framed.ErrorCode;
-import io.grpc.okhttp.internal.framed.FrameReader;
-import io.grpc.okhttp.internal.framed.FrameWriter;
-import io.grpc.okhttp.internal.framed.Header;
-import io.grpc.okhttp.internal.framed.HeadersMode;
-import io.grpc.okhttp.internal.framed.Settings;
+import io.grpc.okhttp.internal.framed.*;
 import io.grpc.testing.TestMethodDescriptors;
-import java.io.BufferedReader;
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.net.InetSocketAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.net.SocketAddress;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import javax.annotation.Nullable;
-import javax.net.ssl.HostnameVerifier;
-import javax.net.ssl.SSLSocketFactory;
 import okio.Buffer;
 import okio.ByteString;
 import org.junit.After;
@@ -112,12 +42,34 @@ import org.junit.Test;
 import org.junit.rules.Timeout;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-import org.mockito.Answers;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InOrder;
-import org.mockito.Matchers;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.*;
+
+import javax.annotation.Nullable;
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLSocketFactory;
+import java.io.*;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.SocketAddress;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import static com.google.common.base.Charsets.UTF_8;
+import static com.google.common.truth.Truth.assertThat;
+import static io.grpc.internal.ClientStreamListener.RpcProgress.PROCESSED;
+import static io.grpc.internal.ClientStreamListener.RpcProgress.REFUSED;
+import static io.grpc.internal.GrpcUtil.DEFAULT_MAX_MESSAGE_SIZE;
+import static io.grpc.okhttp.Headers.*;
+import static org.junit.Assert.*;
+import static org.mockito.Matchers.any;
+import static org.mockito.Matchers.anyBoolean;
+import static org.mockito.Matchers.anyInt;
+import static org.mockito.Matchers.eq;
+import static org.mockito.Matchers.isA;
+import static org.mockito.Matchers.same;
+import static org.mockito.Mockito.*;
 
 /**
  * Tests for {@link OkHttpClientTransport}.
@@ -139,8 +91,7 @@ public class OkHttpClientTransportTest {
 
   @Rule public final Timeout globalTimeout = Timeout.seconds(10);
 
-  @Mock(answer = Answers.CALLS_REAL_METHODS)
-  private MockFrameWriter frameWriter;
+  private FrameWriter frameWriter;
 
   private MethodDescriptor<Void, Void> method = TestMethodDescriptors.voidMethod();
 
@@ -150,6 +101,7 @@ public class OkHttpClientTransportTest {
   private final SSLSocketFactory sslSocketFactory = null;
   private final HostnameVerifier hostnameVerifier = null;
   private final TransportTracer transportTracer = new TransportTracer();
+  private final Queue<Buffer> capturedBuffer = new ArrayDeque<>();
   private OkHttpClientTransport clientTransport;
   private MockFrameReader frameReader;
   private Socket socket;
@@ -169,7 +121,10 @@ public class OkHttpClientTransportTest {
     MockitoAnnotations.initMocks(this);
     frameReader = new MockFrameReader();
     socket = new MockSocket(frameReader);
-    frameWriter.setSocket(socket);
+    frameWriter =
+        mock(
+            FrameWriter.class,
+            AdditionalAnswers.delegatesTo(new MockFrameWriter(socket, capturedBuffer)));
   }
 
   @After
@@ -558,10 +513,9 @@ public class OkHttpClientTransportTest {
     assertEquals(12, input.available());
     stream.writeMessage(input);
     stream.flush();
-    ArgumentCaptor<Buffer> captor = ArgumentCaptor.forClass(Buffer.class);
     verify(frameWriter, timeout(TIME_OUT_MS))
-        .data(eq(false), eq(3), captor.capture(), eq(12 + HEADER_LENGTH));
-    Buffer sentFrame = captor.getValue();
+        .data(eq(false), eq(3), any(Buffer.class), eq(12 + HEADER_LENGTH));
+    Buffer sentFrame = capturedBuffer.poll();
     assertEquals(createMessageFrame(message), sentFrame);
     stream.cancel(Status.CANCELLED);
     shutdownAndVerify();
@@ -890,11 +844,9 @@ public class OkHttpClientTransportTest {
     assertEquals(22, input.available());
     stream.writeMessage(input);
     stream.flush();
-    ArgumentCaptor<Buffer> captor =
-        ArgumentCaptor.forClass(Buffer.class);
     verify(frameWriter, timeout(TIME_OUT_MS))
-        .data(eq(false), eq(3), captor.capture(), eq(22 + HEADER_LENGTH));
-    Buffer sentFrame = captor.getValue();
+        .data(eq(false), eq(3), any(Buffer.class), eq(22 + HEADER_LENGTH));
+    Buffer sentFrame = capturedBuffer.poll();
     assertEquals(createMessageFrame(sentMessage), sentFrame);
 
     // And read.
@@ -978,10 +930,9 @@ public class OkHttpClientTransportTest {
     // The second stream should be active now, and the pending data should be sent out.
     assertEquals(1, activeStreamCount());
     assertEquals(0, clientTransport.getPendingStreamSize());
-    ArgumentCaptor<Buffer> captor = ArgumentCaptor.forClass(Buffer.class);
     verify(frameWriter, timeout(TIME_OUT_MS))
-        .data(eq(true), eq(5), captor.capture(), eq(5 + HEADER_LENGTH));
-    Buffer sentFrame = captor.getValue();
+        .data(eq(true), eq(5), any(Buffer.class), eq(5 + HEADER_LENGTH));
+    Buffer sentFrame = capturedBuffer.poll();
     assertEquals(createMessageFrame(sentMessage), sentFrame);
     stream2.cancel(Status.CANCELLED);
     shutdownAndVerify();
@@ -1444,8 +1395,6 @@ public class OkHttpClientTransportTest {
   @Test
   public void writeBeforeConnected() throws Exception {
     initTransportAndDelayConnected();
-    // clear invocation during setup
-    verify(frameWriter).setSocket(socket);
     final String message = "Hello Server";
     MockStreamListener listener = new MockStreamListener();
     OkHttpClientStream stream =
@@ -1460,10 +1409,9 @@ public class OkHttpClientTransportTest {
     allowTransportConnected();
 
     // The queued message should be sent out.
-    ArgumentCaptor<Buffer> captor = ArgumentCaptor.forClass(Buffer.class);
     verify(frameWriter, timeout(TIME_OUT_MS))
-        .data(eq(false), eq(3), captor.capture(), eq(12 + HEADER_LENGTH));
-    Buffer sentFrame = captor.getValue();
+        .data(eq(false), eq(3), any(Buffer.class), eq(12 + HEADER_LENGTH));
+    Buffer sentFrame = capturedBuffer.poll();
     assertEquals(createMessageFrame(message), sentFrame);
     stream.cancel(Status.CANCELLED);
     shutdownAndVerify();
@@ -1472,8 +1420,6 @@ public class OkHttpClientTransportTest {
   @Test
   public void cancelBeforeConnected() throws Exception {
     initTransportAndDelayConnected();
-    // clear invocation during setup
-    verify(frameWriter).setSocket(socket);
     final String message = "Hello Server";
     MockStreamListener listener = new MockStreamListener();
     OkHttpClientStream stream =
@@ -2123,11 +2069,15 @@ public class OkHttpClientTransportTest {
   private static class MockFrameWriter implements FrameWriter {
 
     private Socket socket;
+    private Queue<Buffer> capturedBuffer;
 
-    /**
-     * Sets a socket to close. Some tests assumes that FrameWriter will close underlying sink which
-     * will eventually close the socket.
-     */
+    public MockFrameWriter(Socket socket, Queue<Buffer> capturedBuffer) {
+      // Sets a socket to close. Some tests assumes that FrameWriter will close underlying sink which
+      // will eventually close the socket.
+      this.socket = socket;
+      this.capturedBuffer = capturedBuffer;
+    }
+
     void setSocket(Socket socket) {
       this.socket = socket;
     }
@@ -2140,6 +2090,15 @@ public class OkHttpClientTransportTest {
     @Override
     public int maxDataLength() {
       return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public void data(boolean outFinished, int streamId, Buffer source, int byteCount)
+        throws IOException {
+      // simulate the side effect, and captures to internal queue.
+      Buffer capture = new Buffer();
+      capture.write(source, byteCount);
+      capturedBuffer.add(capture);
     }
 
     // rest of methods are unimplemented
@@ -2170,11 +2129,6 @@ public class OkHttpClientTransportTest {
 
     @Override
     public void rstStream(int streamId, ErrorCode errorCode) throws IOException {}
-
-
-    @Override
-    public void data(boolean outFinished, int streamId, Buffer source, int byteCount)
-        throws IOException {}
 
     @Override
     public void settings(Settings okHttpSettings) throws IOException {}
