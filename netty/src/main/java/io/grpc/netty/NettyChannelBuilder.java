@@ -389,6 +389,7 @@ public final class NettyChannelBuilder
       }
       negotiator = createProtocolNegotiatorByType(negotiationType, localSslContext);
     }
+    System.out.println("channelType for client is " + channelType);
     return new NettyTransportFactory(
         negotiator, channelType, channelOptions,
         eventLoopGroup, flowControlWindow, maxInboundMessageSize(),

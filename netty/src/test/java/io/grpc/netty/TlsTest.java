@@ -27,6 +27,7 @@ import io.grpc.ServerBuilder;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.internal.testing.TestUtils;
+import io.grpc.netty.del.DelegatingChannel;
 import io.grpc.stub.StreamObserver;
 import io.grpc.testing.protobuf.SimpleRequest;
 import io.grpc.testing.protobuf.SimpleResponse;
@@ -335,6 +336,7 @@ public class TlsTest {
   private static ManagedChannel clientChannel(int port, SslContext sslContext) throws IOException {
     return NettyChannelBuilder.forAddress("localhost", port)
         .overrideAuthority(TestUtils.TEST_SERVER_HOST)
+        .channelType(DelegatingChannel.class)
         .negotiationType(NegotiationType.TLS)
         .sslContext(sslContext)
         .build();

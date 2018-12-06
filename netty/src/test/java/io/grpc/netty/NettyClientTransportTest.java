@@ -62,6 +62,7 @@ import io.grpc.internal.ServerTransportListener;
 import io.grpc.internal.TransportTracer;
 import io.grpc.internal.testing.TestUtils;
 import io.grpc.netty.NettyChannelBuilder.LocalSocketPicker;
+import io.grpc.netty.del.DelegatingChannel;
 import io.netty.channel.ChannelConfig;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -331,6 +332,7 @@ public class NettyClientTransportTest {
       rpc.waitForClose();
       fail("expected exception");
     } catch (ExecutionException ex) {
+      ex.printStackTrace();
       assertSame(failureStatus, ((StatusException) ex.getCause()).getStatus());
     }
   }
@@ -600,8 +602,9 @@ public class NettyClientTransportTest {
       keepAliveTimeNano = TimeUnit.SECONDS.toNanos(10L);
     }
     NettyClientTransport transport = new NettyClientTransport(
-        address, NioSocketChannel.class, new HashMap<ChannelOption<?>, Object>(), group, negotiator,
-        DEFAULT_WINDOW_SIZE, maxMsgSize, maxHeaderListSize,
+        address, DelegatingChannel.class, new HashMap<ChannelOption<?>, Object>(), group,
+        // address, NioSocketChannel.class, new HashMap<ChannelOption<?>, Object>(), group,
+        negotiator, DEFAULT_WINDOW_SIZE, maxMsgSize, maxHeaderListSize,
         keepAliveTimeNano, keepAliveTimeoutNano,
         false, authority, userAgent, tooManyPingsRunnable,
         new TransportTracer(), eagAttributes, new SocketPicker());
@@ -763,7 +766,7 @@ public class NettyClientTransportTest {
   private final class EchoServerListener implements ServerListener {
     final List<NettyServerTransport> transports = new ArrayList<>();
     final List<EchoServerStreamListener> streamListeners =
-            Collections.synchronizedList(new ArrayList<EchoServerStreamListener>());
+        Collections.synchronizedList(new ArrayList<EchoServerStreamListener>());
 
     @Override
     public ServerTransportListener transportCreated(final ServerTransport transport) {

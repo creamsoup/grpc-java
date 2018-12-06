@@ -22,6 +22,7 @@ import io.grpc.netty.InternalHandlerSettings;
 import io.grpc.netty.NegotiationType;
 import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.del.DelegatingChannel;
 import org.junit.BeforeClass;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -44,6 +45,7 @@ public class AutoWindowSizingOnTest extends AbstractInteropTest {
   @Override
   protected ManagedChannel createChannel() {
     NettyChannelBuilder builder = NettyChannelBuilder.forAddress("localhost", getPort())
+        .channelType(DelegatingChannel.class)
         .negotiationType(NegotiationType.PLAINTEXT)
         .maxInboundMessageSize(AbstractInteropTest.MAX_MESSAGE_SIZE);
     io.grpc.internal.TestingAccessor.setStatsImplementation(

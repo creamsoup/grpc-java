@@ -28,6 +28,7 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.NegotiationType;
 import io.grpc.netty.NettyChannelBuilder;
+import io.grpc.netty.del.DelegatingChannel;
 import io.grpc.stub.StreamObserver;
 import io.grpc.testing.integration.Messages.Payload;
 import io.grpc.testing.integration.Messages.SimpleRequest;
@@ -360,7 +361,9 @@ public final class Http2Client {
     } catch (UnknownHostException ex) {
       throw new RuntimeException(ex);
     }
+    System.out.println("DCDCDC http2Client");
     return NettyChannelBuilder.forAddress(new InetSocketAddress(address, serverPort))
+        .channelType(DelegatingChannel.class)
         .negotiationType(NegotiationType.PLAINTEXT)
         .build();
   }

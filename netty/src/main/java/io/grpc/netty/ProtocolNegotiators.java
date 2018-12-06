@@ -154,6 +154,7 @@ public final class ProtocolNegotiators {
 
     @Override
     public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+      System.out.println(System.currentTimeMillis() + " Event!!: " + evt);
       if (evt instanceof SslHandshakeCompletionEvent) {
         SslHandshakeCompletionEvent handshakeEvent = (SslHandshakeCompletionEvent) evt;
         if (handshakeEvent.isSuccess()) {
@@ -175,6 +176,8 @@ public final class ProtocolNegotiators {
                 "Failed protocol negotiation: Unable to find compatible protocol."));
           }
         } else {
+          System.out.println("!!!");
+          handshakeEvent.cause().printStackTrace();
           fail(ctx, handshakeEvent.cause());
         }
       }
@@ -187,6 +190,8 @@ public final class ProtocolNegotiators {
 
     @SuppressWarnings("FutureReturnValueIgnored")
     private void fail(ChannelHandlerContext ctx, Throwable exception) {
+      System.out.println("something failed");
+      exception.printStackTrace();
       logSslEngineDetails(Level.FINE, ctx, "TLS negotiation failed for new client.", exception);
       ctx.close();
     }
@@ -322,7 +327,7 @@ public final class ProtocolNegotiators {
           SSLParameters sslParams = sslEngine.getSSLParameters();
           sslParams.setEndpointIdentificationAlgorithm("HTTPS");
           sslEngine.setSSLParameters(sslParams);
-          ctx.pipeline().replace(this, null, new SslHandler(sslEngine, false));
+          ctx.pipeline().replace(this, "security", new SslHandler(sslEngine, false));
         }
       };
       return new BufferUntilTlsNegotiatedHandler(sslBootstrap, handler);
@@ -696,6 +701,12 @@ public final class ProtocolNegotiators {
         }
       }
       super.userEventTriggered(ctx, evt);
+    }
+
+    @Override
+    public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise)
+        throws Exception {
+      super.write(ctx, msg, promise);
     }
   }
 

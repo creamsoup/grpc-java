@@ -22,10 +22,13 @@ import io.grpc.internal.FakeClock;
 import io.grpc.internal.InternalServer;
 import io.grpc.internal.ManagedClientTransport;
 import io.grpc.internal.testing.AbstractTransportTest;
+import io.grpc.netty.del.DelegatingChannel;
 import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import org.junit.After;
+import org.junit.Ignore;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
@@ -40,6 +43,7 @@ public class NettyTransportTest extends AbstractTransportTest {
       // Although specified here, address is ignored because we never call build.
       .forAddress("localhost", 0)
       .flowControlWindow(65 * 1024)
+      .channelType(DelegatingChannel.class)
       .negotiationType(NegotiationType.PLAINTEXT)
       .setTransportTracerFactory(fakeClockTransportTracer)
       .buildTransportFactory();
@@ -98,8 +102,8 @@ public class NettyTransportTest extends AbstractTransportTest {
           .setAuthority(testAuthority(server)));
   }
 
-  @org.junit.Ignore
-  @org.junit.Test
+  @Ignore
+  @Test
   @Override
   public void clientChecksInboundMetadataSize_trailer() throws Exception {
     // Server-side is flaky due to https://github.com/netty/netty/pull/8332

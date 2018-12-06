@@ -98,7 +98,7 @@ import org.mockito.stubbing.OngoingStubbing;
 /** Standard unit tests for {@link ClientTransport}s and {@link ServerTransport}s. */
 @RunWith(JUnit4.class)
 public abstract class AbstractTransportTest {
-  private static final int TIMEOUT_MS = 1000;
+  protected static final int TIMEOUT_MS = 1000;
 
   private static final Attributes.Key<String> ADDITIONAL_TRANSPORT_ATTR_KEY =
       Attributes.Key.create("additional-attr");
@@ -146,27 +146,27 @@ public abstract class AbstractTransportTest {
    * {@code serverListener}, otherwise tearDown() can't wait for shutdown which can put following
    * tests in an indeterminate state.
    */
-  private InternalServer server;
-  private ServerTransport serverTransport;
-  private ManagedClientTransport client;
-  private MethodDescriptor<String, String> methodDescriptor =
+  protected InternalServer server;
+  protected ServerTransport serverTransport;
+  protected ManagedClientTransport client;
+  protected MethodDescriptor<String, String> methodDescriptor =
       MethodDescriptor.<String, String>newBuilder()
           .setType(MethodDescriptor.MethodType.UNKNOWN)
           .setFullMethodName("service/method")
           .setRequestMarshaller(StringMarshaller.INSTANCE)
           .setResponseMarshaller(StringMarshaller.INSTANCE)
           .build();
-  private CallOptions callOptions;
+  protected CallOptions callOptions;
 
   private Metadata.Key<String> asciiKey = Metadata.Key.of(
       "ascii-key", Metadata.ASCII_STRING_MARSHALLER);
   private Metadata.Key<String> binaryKey = Metadata.Key.of(
       "key-bin", StringBinaryMarshaller.INSTANCE);
 
-  private ManagedClientTransport.Listener mockClientTransportListener
+  protected ManagedClientTransport.Listener mockClientTransportListener
       = mock(ManagedClientTransport.Listener.class);
-  private MockServerListener serverListener = new MockServerListener();
-  private ArgumentCaptor<Throwable> throwableCaptor = ArgumentCaptor.forClass(Throwable.class);
+  protected MockServerListener serverListener = new MockServerListener();
+  protected ArgumentCaptor<Throwable> throwableCaptor = ArgumentCaptor.forClass(Throwable.class);
   private final ClientStreamTracer.Factory clientStreamTracerFactory =
       mock(ClientStreamTracer.Factory.class);
 
@@ -1971,7 +1971,7 @@ public abstract class AbstractTransportTest {
     }
   }
 
-  private static void assertCodeEquals(Status expected, Status actual) {
+  protected static void assertCodeEquals(Status expected, Status actual) {
     assertCodeEquals(null, expected, actual);
   }
 
@@ -1998,7 +1998,7 @@ public abstract class AbstractTransportTest {
     return true;
   }
 
-  private static void runIfNotNull(Runnable runnable) {
+  protected static void runIfNotNull(Runnable runnable) {
     if (runnable != null) {
       runnable.run();
     }
@@ -2011,7 +2011,7 @@ public abstract class AbstractTransportTest {
     verify(listener, timeout(TIMEOUT_MS)).transportReady();
   }
 
-  private static class MockServerListener implements ServerListener {
+  protected static class MockServerListener implements ServerListener {
     public final BlockingQueue<MockServerTransportListener> listeners
         = new LinkedBlockingQueue<MockServerTransportListener>();
     private final SettableFuture<?> shutdown = SettableFuture.create();

@@ -25,6 +25,7 @@ import io.grpc.internal.testing.TestUtils;
 import io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.del.DelegatingChannel;
 import io.netty.handler.ssl.ClientAuth;
 import io.netty.handler.ssl.SupportedCipherSuiteFilter;
 import java.io.IOException;
@@ -61,8 +62,10 @@ public class Http2NettyTest extends AbstractInteropTest {
   @Override
   protected ManagedChannel createChannel() {
     try {
+      System.out.println("DCDCDC 3");
       NettyChannelBuilder builder = NettyChannelBuilder
           .forAddress(TestUtils.testServerAddress(getPort()))
+          .channelType(DelegatingChannel.class)
           .flowControlWindow(65 * 1024)
           .maxInboundMessageSize(AbstractInteropTest.MAX_MESSAGE_SIZE)
           .sslContext(GrpcSslContexts
