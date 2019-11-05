@@ -105,6 +105,7 @@ final class XdsNameResolver extends NameResolver {
         ResolutionResult.newBuilder()
             .setAddresses(Collections.<EquivalentAddressGroup>emptyList())
             .setAttributes(attrs)
+            .setServiceConfig(ConfigOrError.fromConfig(config))
             .build();
     listener.onResult(result);
   }
