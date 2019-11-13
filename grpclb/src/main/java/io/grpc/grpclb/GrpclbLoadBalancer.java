@@ -175,8 +175,9 @@ class GrpclbLoadBalancer extends LoadBalancer {
   private void recreateStates() {
     resetStates();
     checkState(grpclbState == null, "Should've been cleared");
-    grpclbState = new GrpclbState(mode, helper, subchannelPool, time, stopwatch,
-        backoffPolicyProvider);
+    // TODO(jihuncho) instead of passing the helper, consider passing the target_name.
+    grpclbState = new GrpclbState(
+        mode, helper, subchannelPool, time, stopwatch, backoffPolicyProvider);
   }
 
   @Override
@@ -204,8 +205,7 @@ class GrpclbLoadBalancer extends LoadBalancer {
 
   // TODO(carl-mastrangelo): delete getList and checkObjectList once apply is complete for SVCCFG.
   /**
-   * Gets a list from an object for the given key.  Copy of
-   * {@link io.grpc.internal.ServiceConfigUtil#getList}.
+   * Gets a list from an object for the given key.
    */
   @Nullable
   private static List<?> getList(Map<String, ?> obj, String key) {
@@ -221,9 +221,6 @@ class GrpclbLoadBalancer extends LoadBalancer {
     return (List<?>) value;
   }
 
-  /**
-   * Copy of {@link io.grpc.internal.ServiceConfigUtil#checkObjectList}.
-   */
   @SuppressWarnings("unchecked")
   private static List<Map<String, ?>> checkObjectList(List<?> rawList) {
     for (int i = 0; i < rawList.size(); i++) {

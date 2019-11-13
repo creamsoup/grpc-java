@@ -3,10 +3,9 @@ plugins {
     id "maven-publish"
 
     id "com.google.protobuf"
-    id "ru.vyarus.animalsniffer"
 }
 
-description = "gRPC: Services"
+description = "gRPC: RouteLookupService"
 
 [compileJava].each() {
     // v1alpha of reflection.proto is deprecated at the file level.
@@ -24,15 +23,14 @@ dependencies {
             project(':grpc-core'),
             project(':grpc-alts')
     compile (libraries.protobuf_util) {
-        // prefer our own versions instead of protobuf-util's dependency
+        // prefer 26.0-android from libraries instead of 20.0
         exclude group: 'com.google.guava', module: 'guava'
+        // prefer 2.3.3 from libraries instead of 2.3.2
         exclude group: 'com.google.errorprone', module: 'error_prone_annotations'
     }
 
     compileOnly libraries.javax_annotation
-    testCompile project(':grpc-testing'),
-            libraries.netty_epoll, // for DomainSocketAddress
-            project(':grpc-core').sourceSets.test.output  // for FakeClock
+    testCompile project(':grpc-testing')
     testCompileOnly libraries.javax_annotation
     signature "org.codehaus.mojo.signature:java17:1.0@signature"
 }
