@@ -2812,6 +2812,7 @@ public class ManagedChannelImplTest {
             new EquivalentAddressGroup(
                 Arrays.asList(new SocketAddress() {}, new SocketAddress() {}))))
         .setAttributes(attributes)
+        .setServiceConfig(ConfigOrError.fromConfig(new HashMap<String, Object>()))
         .build();
     nameResolverFactory.resolvers.get(0).listener.onResult(resolutionResult1);
     assertThat(getStats(channel).channelTrace.events).hasSize(prevSize + 1);
@@ -2828,9 +2829,10 @@ public class ManagedChannelImplTest {
             new EquivalentAddressGroup(
                 Arrays.asList(new SocketAddress() {}, new SocketAddress() {}))))
         .setAttributes(attributes)
+        .setServiceConfig(ConfigOrError.fromConfig(new HashMap<String, Object>()))
         .build();
     nameResolverFactory.resolvers.get(0).listener.onResult(resolutionResult2);
-    assertThat(getStats(channel).channelTrace.events).hasSize(prevSize);
+    assertThat(getStats(channel).channelTrace.events).hasSize(prevSize + 1);
 
     prevSize = getStats(channel).channelTrace.events.size();
     Map<String, Object> serviceConfig = new HashMap<>();
@@ -2845,6 +2847,7 @@ public class ManagedChannelImplTest {
             new EquivalentAddressGroup(
                 Arrays.asList(new SocketAddress() {}, new SocketAddress() {}))))
         .setAttributes(attributes)
+        .setServiceConfig(ConfigOrError.fromConfig(new HashMap<String, Object>()))
         .build();
     nameResolverFactory.resolvers.get(0).listener.onResult(resolutionResult3);
     assertThat(getStats(channel).channelTrace.events).hasSize(prevSize + 1);
@@ -3408,15 +3411,17 @@ public class ManagedChannelImplTest {
       @Override
       public void start(Listener2 listener) {
         this.listener = listener;
+        ImmutableMap<String, Object> serviceConfig =
+            ImmutableMap.<String, Object>of("loadBalancingPolicy", "kaboom");
         listener.onResult(
             ResolutionResult.newBuilder()
                 .setAddresses(addresses)
                 .setAttributes(
                     Attributes.newBuilder()
                         .set(
-                            GrpcAttributes.NAME_RESOLVER_SERVICE_CONFIG,
-                            ImmutableMap.<String, Object>of("loadBalancingPolicy", "kaboom"))
+                            GrpcAttributes.NAME_RESOLVER_SERVICE_CONFIG, serviceConfig)
                         .build())
+                .setServiceConfig(ConfigOrError.fromConfig(serviceConfig))
                 .build());
       }
 
@@ -3469,15 +3474,17 @@ public class ManagedChannelImplTest {
 
     // ok the service config is bad, let's fix it.
 
+    ImmutableMap<String, Object> serviceConfig =
+        ImmutableMap.<String, Object>of("loadBalancingPolicy", "round_robin");
     factory.resolver.listener.onResult(
         ResolutionResult.newBuilder()
             .setAddresses(addresses)
             .setAttributes(
                 Attributes.newBuilder()
                     .set(
-                        GrpcAttributes.NAME_RESOLVER_SERVICE_CONFIG,
-                        ImmutableMap.<String, Object>of("loadBalancingPolicy", "round_robin"))
+                        GrpcAttributes.NAME_RESOLVER_SERVICE_CONFIG, serviceConfig)
                     .build())
+            .setServiceConfig(ConfigOrError.fromConfig(serviceConfig))
             .build());
 
     ClientCall<Void, Void> call2 = mychannel.newCall(
@@ -4056,11 +4063,16 @@ public class ManagedChannelImplTest {
           listener.onError(error);
           return;
         }
-        listener.onResult(
+        Attributes attr = nextResolvedAttributes.get();
+        Map<String, ?> config = attr.get(GrpcAttributes.NAME_RESOLVER_SERVICE_CONFIG);
+        ResolutionResult.Builder builder =
             ResolutionResult.newBuilder()
                 .setAddresses(servers)
-                .setAttributes(nextResolvedAttributes.get())
-                .build());
+                .setAttributes(attr);
+        if (config != null) {
+          builder.setServiceConfig(ConfigOrError.fromConfig(config));
+        }
+        listener.onResult(builder.build());
       }
 
       @Override public void shutdown() {
