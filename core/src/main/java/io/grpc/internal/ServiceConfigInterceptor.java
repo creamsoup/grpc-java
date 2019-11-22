@@ -26,12 +26,9 @@ import io.grpc.ClientInterceptor;
 import io.grpc.Deadline;
 import io.grpc.MethodDescriptor;
 import io.grpc.internal.ManagedChannelServiceConfig.MethodInfo;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.CheckForNull;
-import javax.annotation.Nullable;
 
 /**
  * Modifies RPCs in conformance with a Service Config.
@@ -40,34 +37,31 @@ final class ServiceConfigInterceptor implements ClientInterceptor {
 
   // Map from method name to MethodInfo
   @VisibleForTesting
-  final AtomicReference<ManagedChannelServiceConfig> managedChannelServiceConfig
-      = new AtomicReference<>();
+  final AtomicReference<ManagedChannelServiceConfig> managedChannelServiceConfig =
+      new AtomicReference<>();
 
   private final boolean retryEnabled;
-  private final int maxRetryAttemptsLimit;
-  private final int maxHedgedAttemptsLimit;
 
   // Setting this to true and observing this equal to true are run in different threads.
   private volatile boolean initComplete;
 
-  ServiceConfigInterceptor(
-      boolean retryEnabled, int maxRetryAttemptsLimit, int maxHedgedAttemptsLimit) {
+  ServiceConfigInterceptor(boolean retryEnabled) {
     this.retryEnabled = retryEnabled;
-    this.maxRetryAttemptsLimit = maxRetryAttemptsLimit;
-    this.maxHedgedAttemptsLimit = maxHedgedAttemptsLimit;
   }
 
-  void handleUpdate(@Nullable Map<String, ?> serviceConfig) {
-    // TODO(carl-mastrangelo): delete this.
-    ManagedChannelServiceConfig conf;
+  void handleUpdate(Object serviceConfig) {
     if (serviceConfig == null) {
-      conf = new ManagedChannelServiceConfig(
-          new HashMap<String, MethodInfo>(), new HashMap<String, MethodInfo>(), null, null);
+      managedChannelServiceConfig.set(null);
     } else {
-      conf = ManagedChannelServiceConfig.fromServiceConfig(
-          serviceConfig, retryEnabled, maxRetryAttemptsLimit, maxHedgedAttemptsLimit, null);
+      if (!(serviceConfig instanceof ManagedChannelServiceConfig)) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Expected service config type: %s, but got %s",
+                ManagedChannelServiceConfig.class,
+                serviceConfig.getClass()));
+      }
+      managedChannelServiceConfig.set((ManagedChannelServiceConfig) serviceConfig);
     }
-    managedChannelServiceConfig.set(conf);
     initComplete = true;
   }
 
