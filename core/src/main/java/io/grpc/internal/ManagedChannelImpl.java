@@ -1371,7 +1371,7 @@ final class ManagedChannelImpl extends ManagedChannel implements
                 // First DNS lookup has invalid service config, and cannot fall back to default
                 channelLogger.log(
                     ChannelLogLevel.INFO,
-                    "Received invalid first service config without default config, this is error");
+                    "Fallback to error due to invalid first service config without default config");
                 onError(configOrError.getError());
                 return;
               } else {
@@ -1423,13 +1423,13 @@ final class ManagedChannelImpl extends ManagedChannel implements
                     .build());
 
             if (!handleResult.isOk()) {
-              if (!(servers.isEmpty() && lastResolutionStateCopy == ResolutionState.SUCCESS)) {
-                handleErrorInSyncContext(handleResult.augmentDescription(resolver + " was used"));
-              } else {
-                // lb doesn't expose that it needs address or not, because for some LB is not
+              if (servers.isEmpty() && lastResolutionStateCopy == ResolutionState.SUCCESS) {
+                // lb doesn't expose that it needs address or not, because for some LB it is not
                 // deterministic. Assuming lb needs address if LB returns error when the address is
-                // empty and it is not first resolution.
+                // empty and it is not the first resolution.
                 scheduleExponentialBackOffInSyncContext();
+              } else {
+                handleErrorInSyncContext(handleResult.augmentDescription(resolver + " was used"));
               }
             }
           }
@@ -1959,8 +1959,7 @@ final class ManagedChannelImpl extends ManagedChannel implements
   }
 
   /**
-   * A ResolutionState indicates a status of last name resolution status. If no resolution attempt
-   * was made, it is in {@link #NO_RESOLUTION} state.
+   * A ResolutionState indicates the status of last name resolution.
    */
   enum ResolutionState {
     NO_RESOLUTION,
@@ -1985,8 +1984,9 @@ final class ManagedChannelImpl extends ManagedChannel implements
       if (parsed.getConfig() != null) {
         checkState(
             parsed.getConfig() instanceof ManagedChannelServiceConfig,
-            "ServiceConfig should be ManagedChannelServiceConfig, got "
-                + parsed.getConfig().getClass().getSimpleName());
+            "ServiceConfig should be %s, got %s",
+            ManagedChannelServiceConfig.class,
+            parsed.getConfig().getClass().getSimpleName());
       }
     }
 

@@ -16,6 +16,7 @@
 
 package io.grpc.internal;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Verify.verify;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -53,13 +54,11 @@ final class ServiceConfigInterceptor implements ClientInterceptor {
     if (serviceConfig == null) {
       managedChannelServiceConfig.set(null);
     } else {
-      if (!(serviceConfig instanceof ManagedChannelServiceConfig)) {
-        throw new IllegalArgumentException(
-            String.format(
-                "Expected service config type: %s, but got %s",
-                ManagedChannelServiceConfig.class,
-                serviceConfig.getClass()));
-      }
+      checkArgument(
+          serviceConfig instanceof ManagedChannelServiceConfig,
+          "Expected service config type: %s, but got %s",
+          ManagedChannelServiceConfig.class,
+          serviceConfig.getClass());
       managedChannelServiceConfig.set((ManagedChannelServiceConfig) serviceConfig);
     }
     initComplete = true;
