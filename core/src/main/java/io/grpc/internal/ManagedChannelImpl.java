@@ -1338,7 +1338,8 @@ final class ManagedChannelImpl extends ManagedChannel implements
             checkState(
                 configOrError.getConfig() == null
                     || configOrError.getConfig() instanceof ManagedChannelServiceConfig,
-                "Wrong service config type is passed: " + configOrError.getConfig());
+                "Invalid service config type: %s",
+                configOrError.getConfig());
             validServiceConfig = configOrError.getConfig() == null
                 ? null
                 : new ServiceConfigHolder(
