@@ -22,4 +22,6 @@ import io.grpc.rls.RlsProtoData.RouteLookupResponse;
 
 interface RouteLookupClient {
   ListenableFuture<RouteLookupResponse> routeLookup(RouteLookupRequest key);
+
+  void shutdown();
 }

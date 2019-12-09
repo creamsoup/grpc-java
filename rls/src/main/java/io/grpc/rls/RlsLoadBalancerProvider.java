@@ -44,7 +44,7 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
   @Override
   public LoadBalancer newLoadBalancer(LoadBalancer.Helper helper) {
     //TODO also needs key builder map, request cache, lb policy config
-    return new RlsLoadBalancer(helper);
+    return new RlsLoadBalancer(helper, null);
   }
 
   @Override

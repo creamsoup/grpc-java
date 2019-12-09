@@ -26,10 +26,11 @@ import io.grpc.Status;
 class RlsLoadBalancer extends LoadBalancer {
 
   private final Helper helper;
-  private final RlsAsyncRequestCache
+  private final RouteLookupClient client;
 
-  RlsLoadBalancer(Helper helper) {
+  RlsLoadBalancer(Helper helper, RouteLookupClient client) {
     this.helper = checkNotNull(helper, "helper");
+    this.client = checkNotNull(client, "client");
   }
 
   @Override

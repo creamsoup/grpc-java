@@ -24,6 +24,8 @@ import com.google.common.base.Converter;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.SettableFuture;
+import io.grpc.ManagedChannel;
+import io.grpc.ManagedChannelBuilder;
 import io.grpc.lookup.v1alpha1.RouteLookupServiceGrpc;
 import io.grpc.lookup.v1alpha1.RouteLookupServiceGrpc.RouteLookupServiceStub;
 import io.grpc.rls.RlsProtoConverters.RouteLookupResponseConverter;
@@ -45,6 +47,7 @@ final class RouteLookupClientImpl
       respConverter = new RouteLookupResponseConverter().reverse();
 
   private final Throttler throttler;
+  private final ManagedChannel channel;
   private final RouteLookupServiceStub stub;
 
   private RouteLookupClientImpl(Builder builder) {
@@ -55,7 +58,9 @@ final class RouteLookupClientImpl
         builder.maxCacheSize,
         builder.callTimeoutMillis);
     this.throttler = builder.throttler;
-    this.stub = builder.stub;
+    // TODO use directpath, need channel credentials etc.
+    channel = ManagedChannelBuilder.forTarget(builder.target).build();
+    stub = RouteLookupServiceGrpc.newStub(channel);
   }
 
   public ListenableFuture<RouteLookupResponse> routeLookup(RouteLookupRequest request) {
@@ -89,6 +94,11 @@ final class RouteLookupClientImpl
       }
     });
     return response;
+  }
+
+  @Override
+  public void shutdown() {
+    channel.shutdown();
   }
 
   public static final class Builder {
@@ -152,6 +162,7 @@ final class RouteLookupClientImpl
           "staleAge(%s) should be smaller than maxAge(%s)",
           staleAgeMillis,
           maxAgeMillis);
+      checkNotNull(target, "target");
       return new RouteLookupClientImpl(this);
     }
   }

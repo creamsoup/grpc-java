@@ -64,95 +64,41 @@ service RouteLookupService {
   rpc RouteLookup(RouteLookupRequest) returns (RouteLookupResponse) {};
 }
 
-message RouteLookupConfig {
-  // Ordered specifications for how to construct keys for HTTP requests.
-  // If no KeyBuilder matches, an empty map will be sent to the lookup service;
-  // it should likely reply with a global default route and raise an alert.
-  repeated HttpKeyBuilder http_keybuilder = 1;
+// Match against the a given name (e.g. header name or query parameter name).
+// The name must match one of the names listed in the "name" field.  If no
+// name matches, the match fails, unless the optional_match field is true.
+message NameMatcher {
+  // Ordered list of names; the first non-empty value will be used.
+  repeated string name = 1;
 
-  // Unordered specifications for how to construct keys for gRPC requests.
-  // If no KeyBuilder matches, an empty map will be sent to the lookup service;
-  // it should likely reply with a global default route and raise an alert.
-  repeated GrpcKeyBuilder grpc_keybuilder = 2;
-
-  // The name of the lookup service as a gRPC URI.  Typically, this will be
-  // a subdomain of the target, such as "lookup.datastore.googleapis.com".
-  string lookup_service = 3;
-
-  // How long are responses valid for (like HTTP Cache-Control).
-  // If omitted, responses are considered not to be cacheable.
-  // This value is clamped to 5 minutes to avoid unflushable bad responses.
-  google.protobuf.Duration max_age = 4;
-
-  // After a response has been in the client cache for this amount of time
-  // and is re-requested, start an asynchronous RPC to re-validate it.
-  // If omitted, keys are only re-requested after they have expired.
-  google.protobuf.Duration stale_age = 5;
-
-  // Optionally configure a default target if the lookup service is not available.
-  // Note that requests can be routed only to a subdomain of the original target.
-  // e.g. "us_east_1.cloudbigtable.googleapis.com"
-  string default_target = 6;
-
-  // Configure a timeout value for lookup service requests. Required.
-  google.protobuf.Duration lookup_service_timeout = 7;
-
-  // Specify how to process a request when a mapping is not available.
-  enum RequestProcessingStrategy {
-    // unspecified
-    UNSPECIFIED = 0;
-
-    // Query the RLS and process the request using target returned by the
-    // lookup. The target will then be cached and used for processing
-    // subsequent requests for the same key. Any errors during lookup service
-    // processing will fall back to default target for request processing.
-    SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR = 1;
-
-    // Query the RLS and process the request using target returned by the
-    // lookup. The target will then be cached and used for processing
-    // subsequent requests for the same key. Any errors during lookup service
-    // processing will return an error back to the client.  Services with
-    // strict regional routing requirements should use this strategy.
-    SYNC_LOOKUP_CLIENT_SEES_ERROR = 2;
-
-    // Query the RLS asynchronously but respond with the default target.  The
-    // target in the lookup response will then be cached and used for
-    // subsequent requests.  Services with strict latency requirements (but not
-    // strict regional routing requirements) should use this strategy.
-    ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS = 3;
-  }
-  RequestProcessingStrategy request_processing_strategy = 8;
+  // If true, make this extraction optional.
+  // A key builder will still match if no value is found.
+  bool optional_match = 2;
 }
 
+// A GrpcKeyBuilder applies to a given gRPC service, name, and headers.
 message GrpcKeyBuilder {
-  // The gRPC service name and method name, both as fixed strings.
-  // There must be at least one name. Each name entry must be unique across the
-  // entire RouteLookupConfig. If the 'method' field is empty, then this
-  // GrpcKeyBuilder specifies the defaults for all methods for the specified
-  // service.
+  // To match, one of the given Name fields must match; the service and method
+  // fields are specified as fixed strings.  The service name is required and
+  // includes the proto package name.  The method name may be omitted, in
+  // which case any method on the given service is matched.
   message Name {
-    string service = 1;  // Required. Includes proto package name.
+    string service = 1;
     string method = 2;
   }
   repeated Name name = 1;
 
-  message Headers {
-    // Ordered list of header names.
-    // The first non-empty value will be used.
-    repeated string name = 1;
-  }
-
-  // Map of lookup keys to headers.
-  map<string, Headers> headers = 2;
+  // All listed headers must match (or be optional).
+  map<string, NameMatcher> headers = 2;
 }
 
-// An HttpKeyBuilder describes a pattern for extracting lookup keys from a request.
+// An HttpKeyBuilder applies to a given HTTP URL and headers.
+//
 // Path and host patterns use the matching syntax from gRPC transcoding to
 // extract named key/value pairs from the path and host components of the URL:
 // https://github.com/googleapis/googleapis/blob/master/google/api/http.proto
 //
-// The values from the last matching pattern are used.
-// It is an error to specify the same key name in multiple places in a pattern.
+// It is invalid to specify the same key name in multiple places in a pattern.
 //
 // For a service where the project id can be expressed either as a subdomain or
 // in the path, separate HttpKeyBuilders must be used:
@@ -163,11 +109,13 @@ message GrpcKeyBuilder {
 // subdomain will be used as the id and the first segment as the object. If
 // neither pattern matches, no keys will be extracted.
 message HttpKeyBuilder {
-  // An ordered list of host template patterns for the desired value.
-  // A host consists of labels separated by dots. Each label is matched
-  // against the label in the pattern with the following interpretation:
+  // host_pattern is an ordered list of host template patterns for the desired
+  // value.  If any host_pattern values are specified, then at least one must
+  // match, and the last one wins and sets any specified variables.  A host
+  // consists of labels separated by dots. Each label is matched against the
+  // label in the pattern as follows:
   //   - "*": Matches any single label.
-  //   - "**": Matches zero or more labels; must be the first part of the host.
+  //   - "**": Matches zero or more labels (first or last part of host only).
   //   - "{<name>=...}": One or more label capture, where "..." can be any
   //      template that does not include a capture.
   //   - "{<name>}": A single label capture. Identical to {<name>=*}.
@@ -181,19 +129,21 @@ message HttpKeyBuilder {
   //   - "{project=**}": Extracts the entire host.
   repeated string host_pattern = 1;
 
-  // An ordered list of path template patterns for the desired value.
-  // A path consists of segments separated by slashes. Each segment is matched
-  // against the segment in the pattern with the following interpretation:
+  // path_pattern is an ordered list of path template patterns for the desired
+  // value.  If any path_pattern values are specified, then at least one must
+  // match, and the last one wins and sets any specified variables.  A path
+  // consists of segments separated by slashes. Each segment is matched against
+  // the segment in the pattern as follows:
   //   - "*": Matches any single segment.
-  //   - "**": Matches zero or more segments; must be the last part of the path.
+  //   - "**": Matches zero or more segments (first or last part of path only).
   //   - "{<name>=...}": One or more segment capture, where "..." can be any
   //      template that does not include a capture.
   //   - "{<name>}": A single segment capture. Identical to {<name>=*}.
-  // A custom method may also be specified by appending ":" and the custom method
-  // name or "*" to indicate any custom method (including no custom method).
-  // For example, "/*/projects/{project_id}/**:*" extracts `{project_id}` for
-  // any version, resource and custom method that includes it.  By default, any
-  // custom method will be matched.
+  // A custom method may also be specified by appending ":" and the custom
+  // method name or "*" to indicate any custom method (including no custom
+  // method).  For example, "/*/projects/{project_id}/**:*" extracts
+  // `{project_id}` for any version, resource and custom method that includes
+  // it.  By default, any custom method will be matched.
   //
   // Examples:
   //   - "/v1/{name=messages/*}": extracts a name like "messages/12345".
@@ -201,30 +151,86 @@ message HttpKeyBuilder {
   //   - "/v1/users/{user_id}/messages/{message_id}": extracts two key values.
   repeated string path_pattern = 2;
 
-  message QueryParameters {
-    // An ordered list of parameter names which contain the value. The value
-    // from the first existing, non-empty field is used.
-    // For example: `["parent", "name", "resource.name"]`
-    repeated string key = 1;
+  // Map of lookup key names to query parameter names.
+  // For example: ["parent", "name", "resource.name"]
+  // All query_parameters must match or be marked as optional_match.
+  // If a given parameter appears multiple times (?foo=a&foo=b) we will report
+  // it as a comma-separated string (foo=a,b).
+  map<string, NameMatcher> query_parameters = 3;
 
-    // If true, make this extraction optional.
-    // The HttpKeyBuilder will still match if no value is found.
-    bool optional_match = 2;
+  // Map of lookup key names to header names.
+  // All headers must match or be marked as optional_match.
+  // If a given header appears multiple times in the request we will report
+  // it as a comma-separated string, in standard HTML fashion.
+  map<string, NameMatcher> headers = 4;
+}
+
+message RouteLookupConfig {
+  // Ordered specifications for constructing keys for HTTP requests.  Last
+  // match wins.  If no HttpKeyBuilder matches, an empty map will be sent to
+  // the lookup service; it should likely reply with a global default route
+  // and raise an alert.
+  repeated HttpKeyBuilder http_keybuilder = 1;
+
+  // Unordered specifications for constructing keys for gRPC requests.  All
+  // GrpcKeyBuilders on this list must have unique "name" fields so that the
+  // client is free to prebuild a hash map keyed by name.  If no
+  // GrpcKeyBuilder matches, an empty map will be sent to the lookup service;
+  // it should likely reply with a global default route and raise an alert.
+  repeated GrpcKeyBuilder grpc_keybuilder = 2;
+
+  // The name of the lookup service as a gRPC URI.  Typically, this will be
+  // a subdomain of the target, such as "lookup.datastore.googleapis.com".
+  string lookup_service = 3;
+
+  // Configure a timeout value for lookup service requests. Required.
+  google.protobuf.Duration lookup_service_timeout = 4;
+
+  // How long are responses valid for (like HTTP Cache-Control).
+  // If omitted (i.e. 0), responses are considered not to be cacheable.
+  // This value is clamped to 5 minutes to avoid unflushable bad responses.
+  google.protobuf.Duration max_age = 5;
+
+  // After a response has been in the client cache for this amount of time
+  // and is re-requested, start an asynchronous RPC to re-validate it.
+  // This value should be less than max_age by at least the length of a
+  // typical RTT to the Route Lookup Service to fully mask the RTT latency.
+  // If omitted, keys are only re-requested after they have expired.
+  google.protobuf.Duration stale_age = 6;
+
+  // Rough indicator of amount of memory to use for the client cache, in
+  // bytes.  Some of the data structure overhead is not accounted for, so
+  // actual memory consumed will be somewhat greater than this value.
+  // If this field is omitted or set to zero, a client default will be used.
+  // The value may be capped to a lower amount based on client configuration.
+  int64 cache_size = 7;
+
+  // This value provides a default target to use if needed.  It should not be
+  // defined if request processing strategy is SYNC_LOOKUP_CLIENT_SEES_ERROR.
+  // Note that requests can be routed only to a subdomain of the original
+  // target, e.g. "us_east_1.cloudbigtable.googleapis.com".
+  string default_target = 8;
+
+  // Specify how to process a request when a mapping is not available.
+  enum RequestProcessingStrategy {
+    // Query the RLS and process the request using target returned by the
+    // lookup. The target will then be cached and used for processing
+    // subsequent requests for the same key. Any errors during lookup service
+    // processing will fall back to default target for request processing.
+    SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR = 0;
+
+    // Query the RLS and process the request using target returned by the
+    // lookup. The target will then be cached and used for processing
+    // subsequent requests for the same key. Any errors during lookup service
+    // processing will return an error back to the client.  Services with
+    // strict regional routing requirements should use this strategy.
+    SYNC_LOOKUP_CLIENT_SEES_ERROR = 1;
+
+    // Query the RLS asynchronously but respond with the default target.  The
+    // target in the lookup response will then be cached and used for
+    // subsequent requests.  Services with strict latency requirements (but not
+    // strict regional routing requirements) should use this strategy.
+    ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS = 2;
   }
-
-  // Map of lookup keys to query parameters.
-  map<string, QueryParameters> query_parameters = 3;
-
-  message Headers {
-    // Ordered list of header names.
-    // The first non-empty value will be used.
-    repeated string name = 1;
-
-    // If true, make this extraction optional.
-    // The HttpKeyBuilder will still match if no value is found.
-    bool optional_match = 2;
-  }
-
-  // Map of lookup keys to headers.
-  map<string, Headers> headers = 4;
+  RequestProcessingStrategy request_processing_strategy = 9;
 }

@@ -1,8 +1,8 @@
 plugins {
     id "java"
     id "maven-publish"
-
     id "com.google.protobuf"
+    id "application"
 }
 
 description = "gRPC: RouteLookupService Loadbalancing plugin"
@@ -24,6 +24,10 @@ dependencies {
     compileOnly libraries.javax_annotation
     testCompile libraries.truth,
             project(':grpc-core').sourceSets.test.output
+}
+
+application {
+  mainClassName = 'io.grpc.rls.KeyBuilderMap'
 }
 
 configureProtoCompilation()
