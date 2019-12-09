@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.grpc.services.rls;
+package io.grpc.rls;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -143,6 +143,10 @@ public final class AdaptiveThrottler implements Throttler {
         .add("requestStat", requestStat)
         .add("throttledStat", throttledStat)
         .toString();
+  }
+
+  public static Builder builder() {
+    return new Builder();
   }
 
   /** Builder for {@link AdaptiveThrottler}. */

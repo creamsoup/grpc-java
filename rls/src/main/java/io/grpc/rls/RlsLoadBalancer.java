@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.grpc.services.rls;
+package io.grpc.rls;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -26,6 +26,7 @@ import io.grpc.Status;
 class RlsLoadBalancer extends LoadBalancer {
 
   private final Helper helper;
+  private final RlsAsyncRequestCache
 
   RlsLoadBalancer(Helper helper) {
     this.helper = checkNotNull(helper, "helper");

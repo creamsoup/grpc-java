@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.grpc.services.rls;
+package io.grpc.rls;
 
 import javax.annotation.concurrent.ThreadSafe;
 
@@ -42,4 +42,24 @@ public interface Throttler {
    * @param throttled specifies whether the request was throttled by the backend.
    */
   void registerBackendResponse(boolean throttled);
+
+  /**
+   * A ThrottledException indicates the call is throttled. This exception is meant to be used by
+   * caller of {@link Throttler}, the implementation of Throttler should <strong>not</strong> throw
+   * this exception when {@link #shouldThrottle()} is called.
+   */
+  final class ThrottledException extends RuntimeException {
+
+    public ThrottledException() {
+      super();
+    }
+
+    public ThrottledException(String s) {
+      super(s);
+    }
+
+    public ThrottledException(String s, Throwable throwable) {
+      super(s, throwable);
+    }
+  }
 }

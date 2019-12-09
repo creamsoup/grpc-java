@@ -101,8 +101,7 @@ public final class GrpclbLoadBalancerProvider extends LoadBalancerProvider {
   }
 
   /**
-   * Gets a list from an object for the given key.  Copy of
-   * {@link io.grpc.internal.ServiceConfigUtil#getList}.
+   * Gets a list from an object for the given key.
    */
   @Nullable
   private static List<?> getList(Map<String, ?> obj, String key) {
@@ -118,9 +117,6 @@ public final class GrpclbLoadBalancerProvider extends LoadBalancerProvider {
     return (List<?>) value;
   }
 
-  /**
-   * Copy of {@link io.grpc.internal.ServiceConfigUtil#checkObjectList}.
-   */
   @SuppressWarnings("unchecked")
   private static List<Map<String, ?>> checkObjectList(List<?> rawList) {
     for (int i = 0; i < rawList.size(); i++) {

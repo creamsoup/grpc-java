@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-package io.grpc.services.rls;
+package io.grpc.rls;
 
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.NameResolver.ConfigOrError;
-import io.grpc.Status;
+import io.grpc.internal.JsonParser;
+import java.io.IOException;
 import java.util.Map;
 
 public class RlsLoadBalancerProvider extends LoadBalancerProvider {
@@ -32,12 +33,12 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
   @Override
   public int getPriority() {
     // higher than grpclb=5
-    return 7;
+    return 6;
   }
 
   @Override
   public String getPolicyName() {
-    return "rls";
+    return "rlslb";
   }
 
   @Override
@@ -47,13 +48,23 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
   }
 
   @Override
-  public ConfigOrError parseLoadBalancingPolicyConfig(
-      Map<String, ?> rawLoadBalancingConfigPolicy) {
+  public ConfigOrError parseLoadBalancingPolicyConfig(Map<String, ?> rawLoadBalancingConfigPolicy) {
+    /*
     try {
-      return ConfigOrError.fromConfig(LbPolicyConfiguration.from(rawLoadBalancingConfigPolicy));
+      return ConfigOrError.fromConfig(RlsLbPolicyConfiguration.from(rawLoadBalancingConfigPolicy));
     } catch (Exception e) {
       return ConfigOrError.fromError(
-          Status.INTERNAL.withDescription("can't parse config: " + e.getMessage()).withCause(e));
+          Status.INVALID_ARGUMENT
+              .withDescription("can't parse config: " + e.getMessage())
+              .withCause(e));
+    } */
+    try {
+      return ConfigOrError.fromConfig(JsonParser.parse(
+          "{\"route_lookup_config\": {\"TODO\": \"???\"},"
+              + "\"child_policy\": [{\"policy_name\": {}}],"
+              + "\"child_policy_config_target_field_name\": \"another TODO\"}"));
+    } catch (IOException e) {
+      throw new RuntimeException("Invalid fake service config", e);
     }
   }
 }

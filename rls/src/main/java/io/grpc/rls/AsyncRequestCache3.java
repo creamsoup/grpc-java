@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.grpc.services.rls;
+package io.grpc.rls;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -24,7 +24,7 @@ import com.google.common.cache.RemovalCause;
 import com.google.common.cache.RemovalListener;
 import com.google.common.cache.RemovalNotification;
 import com.google.common.util.concurrent.ListenableFuture;
-import io.grpc.services.rls.AdaptiveThrottler.Ticker;
+import io.grpc.rls.AdaptiveThrottler.Ticker;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.concurrent.ConcurrentLinkedQueue;

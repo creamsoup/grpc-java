@@ -503,7 +503,7 @@ public abstract class LoadBalancer {
      * A decision to proceed the RPC on a Subchannel.
      *
      * <p>The Subchannel should either be an original Subchannel returned by {@link
-     * Helper#createSubchannel Helper.createSubchannel()}, or a wrapper of it preferrably based on
+     * Helper#createSubchannel Helper.createSubchannel()}, or a wrapper of it preferably based on
      * {@code ForwardingSubchannel}.  At the very least its {@link Subchannel#getInternalSubchannel
      * getInternalSubchannel()} must return the same object as the one returned by the original.
      * Otherwise the Channel cannot use it for the RPC.
@@ -1020,7 +1020,7 @@ public abstract class LoadBalancer {
 
     /**
      * Updates the addresses used for connections in the {@code Channel} that was created by {@link
-     * #createOobChannel(EquivalentAddressGroup, String)}. This is supperior to {@link
+     * #createOobChannel(EquivalentAddressGroup, String)}. This is superior to {@link
      * #createOobChannel(EquivalentAddressGroup, String)} when the old and new addresses overlap,
      * since the channel can continue using an existing connection.
      *

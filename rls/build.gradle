@@ -5,34 +5,25 @@ plugins {
     id "com.google.protobuf"
 }
 
-description = "gRPC: RouteLookupService"
-
-[compileJava].each() {
-    // v1alpha of reflection.proto is deprecated at the file level.
-    // Without this workaround, the project can not compile.
-    it.options.compilerArgs += [
-        "-Xlint:-deprecation",
-    ]
-}
+description = "gRPC: RouteLookupService Loadbalancing plugin"
 
 evaluationDependsOn(project(':grpc-core').path)
 
 dependencies {
-    compile project(':grpc-protobuf'),
-            project(':grpc-stub'),
+    implementation project(':grpc-alts'),
             project(':grpc-core'),
-            project(':grpc-alts')
-    compile (libraries.protobuf_util) {
+            project(':grpc-protobuf'),
+            project(':grpc-stub'),
+            libraries.protobuf
+    compile(libraries.protobuf_util) {
         // prefer 26.0-android from libraries instead of 20.0
         exclude group: 'com.google.guava', module: 'guava'
         // prefer 2.3.3 from libraries instead of 2.3.2
         exclude group: 'com.google.errorprone', module: 'error_prone_annotations'
     }
-
     compileOnly libraries.javax_annotation
-    testCompile project(':grpc-testing')
-    testCompileOnly libraries.javax_annotation
-    signature "org.codehaus.mojo.signature:java17:1.0@signature"
+    testCompile libraries.truth,
+            project(':grpc-core').sourceSets.test.output
 }
 
 configureProtoCompilation()
