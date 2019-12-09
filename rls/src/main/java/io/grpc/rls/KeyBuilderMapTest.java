@@ -20,7 +20,6 @@ import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.HashBasedTable;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Table;
 import com.google.protobuf.Duration;
 import io.grpc.Metadata;
@@ -35,7 +34,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class KeyBuilderMap {
+public class KeyBuilderMapTest {
   static RouteLookupConfig config = RouteLookupConfig.newBuilder()
       .setLookupService("service1")
       .setMaxAge(Duration.newBuilder().setSeconds(300).build())
@@ -44,7 +43,7 @@ public class KeyBuilderMap {
       .setDefaultTarget("us_east_1.cloudbigtable.googleapis.com")
       .addGrpcKeybuilder(
           GrpcKeyBuilder.newBuilder()
-              .addName(Name.newBuilder().setService("service1").setMethod("create").build())
+              .addName(Name.newBuilder().setService("service1").setMethod("*").build())
               .putHeaders("user", NameMatcher.newBuilder().addName("User").addName("Parent").build())
               .putHeaders("id", NameMatcher.newBuilder().addName("X-Google-Id").setOptionalMatch(true).build())
               .build())
@@ -119,6 +118,12 @@ public class KeyBuilderMap {
     System.out.println("looking for keyBuilder for " + path);
     Map<String, ReqHeaderNames> keyBuilder = keyBuilderTable.row(path);
     System.out.println("keyBuilder for url: " + url + " is " + keyBuilder);
+    if (keyBuilder.isEmpty()) {
+      String service = path.substring(0, path.lastIndexOf("/") + 1);
+      System.out.println("service: " + service);
+      keyBuilder = keyBuilderTable.row(service + "*");
+      System.out.println("fallback keyBuilder for url: " + url + " is " + keyBuilder);
+    }
     //TODO add fallback wildcard logic
     Map<String, String> rlsRequestHeaders = new HashMap<>();
     for (Map.Entry<String, ReqHeaderNames> entry : keyBuilder.entrySet()) {

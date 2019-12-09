@@ -27,7 +27,7 @@ dependencies {
 }
 
 application {
-  mainClassName = 'io.grpc.rls.KeyBuilderMap'
+  mainClassName = 'io.grpc.rls.KeyBuilderMapTest'
 }
 
 configureProtoCompilation()
