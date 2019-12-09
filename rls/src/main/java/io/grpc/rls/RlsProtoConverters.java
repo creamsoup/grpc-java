@@ -85,7 +85,7 @@ final class RlsProtoConverters {
   }
 
   // Note: it usually not a good idea to converts collections to collection (should use convertAll)
-  //  but for convenience / performance reason it doesn't follow the convention.
+  //  for convenience / performance reason, this class doesn't follow the convention (not exposed).
   private static final class HeadersConverter extends Converter<List<Header>, List<String>> {
 
     @Override
