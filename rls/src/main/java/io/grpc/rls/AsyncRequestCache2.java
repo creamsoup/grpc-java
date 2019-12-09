@@ -49,7 +49,9 @@ abstract class AsyncRequestCache2<K, V> {
   private final LinkedHashMap<K, CacheEntry> cache = new LinkedHashMap<K, CacheEntry>() {
     @Override
     protected boolean removeEldestEntry(Map.Entry<K, CacheEntry> eldest) {
-      removalListener.onRemoval(RemovalNotification.create(eldest.getKey(), eldest.getValue().getValue(), RemovalCause.SIZE));
+      removalListener.onRemoval(
+          RemovalNotification
+              .create(eldest.getKey(), eldest.getValue().getValue(), RemovalCause.SIZE));
       return size() > maxSize;
     }
   };
@@ -81,10 +83,6 @@ abstract class AsyncRequestCache2<K, V> {
     ticker = new SystemTicker();
     this.maxSize = (int) maxCacheSize;
     this.removalListener = null;
-    // cache = CacheBuilder.newBuilder()
-    //     .maximumSize(maxCacheSize)
-    //     .expireAfterWrite(maxAgeMillis + callTimeoutMillis, TimeUnit.MILLISECONDS)
-    //     .build();
   }
 
   @VisibleForTesting
@@ -111,29 +109,6 @@ abstract class AsyncRequestCache2<K, V> {
     checkNotNull(removalListener, "removalListener");
     this.maxSize = (int) maxCacheSize;
     this.removalListener = removalListener;
-    // cache = CacheBuilder.newBuilder()
-    //     .maximumSize(maxCacheSize)
-    //     // .concurrencyLevel(Runtime.getRuntime().availableProcessors())
-    //     .expireAfterWrite(maxAgeMillis + callTimeoutMillis, TimeUnit.MILLISECONDS)
-    //     .ticker(new com.google.common.base.Ticker() {
-    //       @Override
-    //       public long read() {
-    //         return TimeUnit.MILLISECONDS.toNanos(AsyncRequestCache2.this.ticker.nowInMillis());
-    //       }
-    //     })
-    //     .removalListener(new RemovalListener<K, CacheEntry>() {
-    //       @Override
-    //       public void onRemoval(RemovalNotification<K, CacheEntry> notification) {
-    //         if (notification.wasEvicted()) {
-    //           removalListener.onRemoval(
-    //               RemovalNotification.create(
-    //                   notification.getKey(),
-    //                   notification.getValue().getValue(),
-    //                   notification.getCause()));
-    //         }
-    //       }
-    //     })
-    //     .build();
   }
 
   /** Performs an async RPC call if cached value doesn't exists. */
