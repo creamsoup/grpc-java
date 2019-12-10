@@ -30,7 +30,9 @@ import javax.annotation.concurrent.Immutable;
 @Immutable
 final class RlsLbPolicyConfiguration {
 
+  // TODO create an object version of this
   private final Map<String, ?> routeLookupConfig;
+  // TODO see https://github.com/grpc/proposal/blob/master/A24-lb-policy-config.md
   private final List<Map<String, ?>> childPolicies;
   private final String childPolicyConfigTargetFieldName;
 
@@ -65,7 +67,6 @@ final class RlsLbPolicyConfiguration {
   public String getChildPolicyConfigTargetFieldName() {
     return childPolicyConfigTargetFieldName;
   }
-
 
   @Override
   public boolean equals(Object o) {

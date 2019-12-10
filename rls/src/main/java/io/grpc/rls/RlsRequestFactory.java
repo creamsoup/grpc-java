@@ -18,14 +18,13 @@ package io.grpc.rls;
 
 import static com.google.common.base.Preconditions.checkState;
 
-import com.google.common.base.MoreObjects;
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Table;
 import io.grpc.Metadata;
-import io.grpc.lookup.v1alpha1.GrpcKeyBuilder;
-import io.grpc.lookup.v1alpha1.GrpcKeyBuilder.Name;
-import io.grpc.lookup.v1alpha1.NameMatcher;
-import io.grpc.lookup.v1alpha1.RouteLookupConfig;
+import io.grpc.rls.RlsProtoData.GrpcKeyBuilder;
+import io.grpc.rls.RlsProtoData.Name;
+import io.grpc.rls.RlsProtoData.NameMatcher;
+import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -37,27 +36,27 @@ import javax.annotation.CheckReturnValue;
 public final class RlsRequestFactory {
 
   // table of Path(serviceName.methodName or serviceName.*), rls request headerName, header fields
-  private final Table<String, String, ReqHeaderNames> keyBuilderTable;
+  private final Table<String, String, NameMatcher> keyBuilderTable;
 
   public RlsRequestFactory(RouteLookupConfig rlsConfig) {
     this.keyBuilderTable = createKeyBuilderTable(rlsConfig);
   }
 
-  private static Table<String, String, ReqHeaderNames> createKeyBuilderTable(
+  private static Table<String, String, NameMatcher> createKeyBuilderTable(
       RouteLookupConfig config) {
-    Table<String, String, ReqHeaderNames> table = HashBasedTable.create();
-    for (GrpcKeyBuilder grpcKeyBuilder : config.getGrpcKeybuilderList()) {
-      for (Map.Entry<String, NameMatcher> entry : grpcKeyBuilder.getHeadersMap().entrySet()) {
+    Table<String, String, NameMatcher> table = HashBasedTable.create();
+    for (GrpcKeyBuilder grpcKeyBuilder : config.getGrpcKeyBuilders()) {
+      for (Map.Entry<String, NameMatcher> entry : grpcKeyBuilder.getHeaders().entrySet()) {
         String rlsRequestHeaderName = entry.getKey();
         NameMatcher nameMatcher = entry.getValue();
-        List<String> requestHeaders = nameMatcher.getNameList();
-        for (Name name : grpcKeyBuilder.getNameList()) {
+        List<String> requestHeaders = nameMatcher.names();
+        for (Name name : grpcKeyBuilder.getNames()) {
           String method = name.getMethod().isEmpty() ? "*" : name.getMethod();
           String path = name.getService() + "/" + method;
           table.put(
               path,
               rlsRequestHeaderName,
-              new ReqHeaderNames(requestHeaders, nameMatcher.getOptionalMatch()));
+              new NameMatcher(requestHeaders, nameMatcher.isOptional()));
         }
       }
     }
@@ -71,7 +70,7 @@ public final class RlsRequestFactory {
     checkState(path != null && path.length() > 0, "Invalid path in the url: %s", url);
     // remove leading /
     path = path.substring(1);
-    Map<String, ReqHeaderNames> keyBuilder = keyBuilderTable.row(path);
+    Map<String, NameMatcher> keyBuilder = keyBuilderTable.row(path);
     // if no matching keyBuilder found, fall back to wildcard match (ServiceName/*)
     if (keyBuilder.isEmpty()) {
       String service = path.substring(0, path.lastIndexOf("/") + 1);
@@ -82,18 +81,18 @@ public final class RlsRequestFactory {
   }
 
   private Map<String, String> createRequestHeaders(
-      Metadata metadata, Map<String, ReqHeaderNames> keyBuilder) {
+      Metadata metadata, Map<String, NameMatcher> keyBuilder) {
     Map<String, String> rlsRequestHeaders = new HashMap<>();
-    for (Map.Entry<String, ReqHeaderNames> entry : keyBuilder.entrySet()) {
+    for (Map.Entry<String, NameMatcher> entry : keyBuilder.entrySet()) {
       String value = null;
-      for (String requestHeaderName : entry.getValue().requestHeaderNames) {
+      for (String requestHeaderName : entry.getValue().names()) {
         value = metadata.get(Metadata.Key.of(requestHeaderName, Metadata.ASCII_STRING_MARSHALLER));
         if (value != null) {
           break;
         }
       }
       checkState(
-          value != null || entry.getValue().optional,
+          value != null || entry.getValue().isOptional(),
           "Required header not found: ",
           entry.getKey());
       if (value != null) {
@@ -101,23 +100,5 @@ public final class RlsRequestFactory {
       }
     }
     return rlsRequestHeaders;
-  }
-
-  private static final class ReqHeaderNames {
-    List<String> requestHeaderNames;
-    boolean optional;
-
-    ReqHeaderNames(List<String> requestHeaderNames, boolean optional) {
-      this.requestHeaderNames = requestHeaderNames;
-      this.optional = optional;
-    }
-
-    @Override
-    public String toString() {
-      return MoreObjects.toStringHelper(this)
-          .add("requestHeaderNames", requestHeaderNames)
-          .add("optional", optional)
-          .toString();
-    }
   }
 }

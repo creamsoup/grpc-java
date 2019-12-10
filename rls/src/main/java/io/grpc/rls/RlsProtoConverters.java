@@ -22,9 +22,11 @@ import com.google.common.base.Converter;
 import io.grpc.lookup.v1alpha1.RouteLookupRequest;
 import io.grpc.lookup.v1alpha1.RouteLookupResponse;
 import io.grpc.lookup.v1alpha1.RouteLookupResponse.Header;
+import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 /**
  * A RlsProtoConverters is a collection of {@link Converter} between RouteLookupService proto
@@ -112,4 +114,10 @@ final class RlsProtoConverters {
       return headerList;
     }
   }
+
+  // This one will be from ServiceConfig (json)
+  // static final class RouteLookupConfigConverter {
+  //   public RouteLookupConfig convert(Map<String, ?> json) {
+  //   }
+  // }
 }

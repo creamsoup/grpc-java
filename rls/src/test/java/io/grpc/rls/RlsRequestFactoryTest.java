@@ -19,51 +19,85 @@ package io.grpc.rls;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.fail;
 
-import com.google.protobuf.Duration;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import io.grpc.Metadata;
-import io.grpc.lookup.v1alpha1.GrpcKeyBuilder;
-import io.grpc.lookup.v1alpha1.GrpcKeyBuilder.Name;
-import io.grpc.lookup.v1alpha1.NameMatcher;
-import io.grpc.lookup.v1alpha1.RouteLookupConfig;
+import io.grpc.rls.RlsProtoData.GrpcKeyBuilder;
+import io.grpc.rls.RlsProtoData.Name;
+import io.grpc.rls.RlsProtoData.NameMatcher;
+import io.grpc.rls.RlsProtoData.RequestProcessingStrategy;
+import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import java.net.URISyntaxException;
+import java.util.concurrent.TimeUnit;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 @RunWith(JUnit4.class)
 public class RlsRequestFactoryTest {
-  private final RouteLookupConfig config = RouteLookupConfig.newBuilder()
-      .setLookupService("service1")
-      .setMaxAge(Duration.newBuilder().setSeconds(300).build())
-      .setStaleAge(Duration.newBuilder().setSeconds(240).build())
-      .setCacheSize(1000)
-      .setDefaultTarget("us_east_1.cloudbigtable.googleapis.com")
-      .addGrpcKeybuilder(
-          GrpcKeyBuilder.newBuilder()
-              .addName(Name.newBuilder().setService("service1").setMethod("create").build())
-              .putHeaders(
-                  "user", NameMatcher.newBuilder().addName("User").addName("Parent").build())
-              .putHeaders(
-                  "id",
-                  NameMatcher.newBuilder().addName("X-Google-Id").setOptionalMatch(true).build())
-              .build())
-      .addGrpcKeybuilder(
-          GrpcKeyBuilder.newBuilder()
-              .addName(Name.newBuilder().setService("service1").setMethod("*").build())
-              .putHeaders(
-                  "user", NameMatcher.newBuilder().addName("User").addName("Parent").build())
-              .putHeaders(
-                  "password",
-                  NameMatcher.newBuilder().addName("Password").setOptionalMatch(true).build())
-              .build())
-      .addGrpcKeybuilder(
-          GrpcKeyBuilder.newBuilder()
-              .addName(Name.newBuilder().setService("service3").build())
-              .putHeaders(
-                  "user", NameMatcher.newBuilder().addName("User").addName("Parent").build())
-              .build())
-      .build();
+  private final RouteLookupConfig config =
+      new RouteLookupConfig(
+          ImmutableList.of(
+              new GrpcKeyBuilder(
+                  ImmutableList.of(new Name("service1", "create")),
+                  ImmutableMap.of(
+                      "user",
+                      new NameMatcher(ImmutableList.of("User", "Parent")),
+                      "id",
+                      new NameMatcher(ImmutableList.of("X-Google-Id"), true))),
+              new GrpcKeyBuilder(
+                  ImmutableList.of(new Name("service1")),
+                  ImmutableMap.of(
+                      "user",
+                      new NameMatcher(ImmutableList.of("User", "Parent")),
+                      "password",
+                      new NameMatcher(ImmutableList.of("Password"), true))),
+              new GrpcKeyBuilder(
+                  ImmutableList.of(new Name("service3")),
+                  ImmutableMap.of(
+                      "user",
+                      new NameMatcher(ImmutableList.of("User", "Parent"))))),
+          /* lookupService= */ "service1",
+          /* lookupServiceTimeoutInMillis= */ TimeUnit.SECONDS.toMillis(2),
+          /* maxAgeInMillis= */ TimeUnit.SECONDS.toMillis(300),
+          /* staleAgeInMillis= */ TimeUnit.SECONDS.toMillis(240),
+          /* cacheSize= */ 1000,
+          /* defaultTarget= */ "us_east_1.cloudbigtable.googleapis.com",
+          RequestProcessingStrategy.ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS);
+
+  //TODO do not erase incase i need to write converter
+  // RouteLookupConfig.newBuilder()
+  // .setLookupService("service1")
+  // .setMaxAge(Duration.newBuilder().setSeconds(300).build())
+  // .setStaleAge(Duration.newBuilder().setSeconds(240).build())
+  // .setCacheSize(1000)
+  // .setDefaultTarget("us_east_1.cloudbigtable.googleapis.com")
+  // .addGrpcKeybuilder(
+  //     GrpcKeyBuilder.newBuilder()
+  //         .addName(Name.newBuilder().setService("service1").setMethod("create").build())
+  //         .putHeaders(
+  //             "user", NameMatcher.newBuilder().addName("User").addName("Parent").build())
+  //         .putHeaders(
+  //             "id",
+  //             NameMatcher.newBuilder().addName("X-Google-Id").setOptionalMatch(true).build())
+  //         .build())
+  // .addGrpcKeybuilder(
+  //     GrpcKeyBuilder.newBuilder()
+  //         .addName(Name.newBuilder().setService("service1").setMethod("*").build())
+  //         .putHeaders(
+  //             "user", NameMatcher.newBuilder().addName("User").addName("Parent").build())
+  //         .putHeaders(
+  //             "password",
+  //             NameMatcher.newBuilder().addName("Password").setOptionalMatch(true).build())
+  //         .build())
+  // .addGrpcKeybuilder(
+  //     GrpcKeyBuilder.newBuilder()
+  //         .addName(Name.newBuilder().setService("service3").build())
+  //         .putHeaders(
+  //             "user", NameMatcher.newBuilder().addName("User").addName("Parent").build())
+  //         .build())
+  // .build();
   private final RlsRequestFactory factory = new RlsRequestFactory(config);
 
   @Test
@@ -125,8 +159,6 @@ public class RlsRequestFactoryTest {
     assertThat(request.getServer()).isEqualTo("foo.com");
     assertThat(request.getKeyMap()).containsExactly("user", "test");
   }
-
-
 
   @Test
   public void create_unknownPath() throws URISyntaxException {
