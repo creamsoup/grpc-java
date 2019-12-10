@@ -65,6 +65,6 @@ public final class RlsNameResolverProvider extends NameResolverProvider {
   protected int priority() {
     // Set priority value to be < 5 as we still want DNS resolver to be the primary default
     // resolver.
-    return 4;
+    return 3;
   }
 }

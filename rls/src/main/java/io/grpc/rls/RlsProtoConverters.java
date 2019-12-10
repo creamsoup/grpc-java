@@ -116,8 +116,9 @@ final class RlsProtoConverters {
   }
 
   // This one will be from ServiceConfig (json)
-  // static final class RouteLookupConfigConverter {
-  //   public RouteLookupConfig convert(Map<String, ?> json) {
-  //   }
-  // }
+  static final class RouteLookupConfigConverter {
+    public RouteLookupConfig convert(Map<String, ?> json) {
+      return null;
+    }
+  }
 }

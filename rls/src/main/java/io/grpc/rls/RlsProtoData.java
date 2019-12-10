@@ -393,7 +393,7 @@ public final class RlsProtoData {
     @Override
     public String toString() {
       return MoreObjects.toStringHelper(this)
-          .add("requestHeaderNames", names)
+          .add("names", names)
           .add("optional", optional)
           .toString();
     }

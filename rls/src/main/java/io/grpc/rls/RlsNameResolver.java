@@ -60,14 +60,14 @@ final class RlsNameResolver extends NameResolver {
   @SuppressWarnings("unchecked")
   public void start(final Listener2 listener) {
    String serviceConfig = "{\n"
-        + "  \"loadBalancingConfig\": [\n"
-        + "    {\n"
-        + "      \"rls_experimental\": {\n"
-        + "        \"childPolicy\": [ {\"round_robin\": {} } ]\n"
-        + "      }\n"
-        + "    }"
-        + "  ]\n"
-        + "}";
+       + "  \"loadBalancingConfig\": [\n"
+       + "    {\n"
+       + "      \"rls_experimental\": {\n"
+       + "        \"childPolicy\": [ {\"grpclb\": {} } ]\n"
+       + "      }\n"
+       + "    }"
+       + "  ]\n"
+       + "}";
     Map<String, ?> config;
     try {
       config = (Map<String, ?>) JsonParser.parse(serviceConfig);
