@@ -30,6 +30,7 @@ import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import java.net.URISyntaxException;
 import java.util.concurrent.TimeUnit;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -45,14 +46,14 @@ public class RlsRequestFactoryTest {
                       "user",
                       new NameMatcher(ImmutableList.of("User", "Parent")),
                       "id",
-                      new NameMatcher(ImmutableList.of("X-Google-Id"), true))),
+                      new NameMatcher(ImmutableList.of("X-Google-Id")))),
               new GrpcKeyBuilder(
                   ImmutableList.of(new Name("service1")),
                   ImmutableMap.of(
                       "user",
                       new NameMatcher(ImmutableList.of("User", "Parent")),
                       "password",
-                      new NameMatcher(ImmutableList.of("Password"), true))),
+                      new NameMatcher(ImmutableList.of("Password")))),
               new GrpcKeyBuilder(
                   ImmutableList.of(new Name("service3")),
                   ImmutableMap.of(
@@ -116,6 +117,7 @@ public class RlsRequestFactoryTest {
   }
 
   @Test
+  @Ignore("grpcKeyBuilder is always optional")
   public void create_missingRequiredHeader() throws URISyntaxException {
     Metadata metadata = new Metadata();
     metadata.put(Metadata.Key.of("X-Google-Id", Metadata.ASCII_STRING_MARSHALLER), "123");

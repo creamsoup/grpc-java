@@ -56,7 +56,7 @@ public final class RlsRequestFactory {
           table.put(
               path,
               rlsRequestHeaderName,
-              new NameMatcher(requestHeaders, nameMatcher.isOptional()));
+              new NameMatcher(requestHeaders));
         }
       }
     }
@@ -91,10 +91,6 @@ public final class RlsRequestFactory {
           break;
         }
       }
-      checkState(
-          value != null || entry.getValue().isOptional(),
-          "Required header not found: ",
-          entry.getKey());
       if (value != null) {
         rlsRequestHeaders.put(entry.getKey(), value);
       }

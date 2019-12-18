@@ -352,16 +352,12 @@ public final class RlsProtoData {
 
     /**
      * If true, make this extraction optional. A key builder will still match if no value is found.
+     * Note for gRPC keyBuilder it is treated as {@code true}.
      */
-    private final boolean optional;
+    private final boolean optional = true;
 
     NameMatcher(List<String> names) {
-      this(names, false);
-    }
-
-    NameMatcher(List<String> names, boolean optional) {
-      this.names = ImmutableList.copyOf(checkNotNull(names, "names"));
-      this.optional = optional;
+      this.names = ImmutableList.copyOf(names);
     }
 
     public ImmutableList<String> names() {

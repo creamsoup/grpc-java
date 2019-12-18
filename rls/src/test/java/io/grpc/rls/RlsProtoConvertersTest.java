@@ -196,14 +196,14 @@ public class RlsProtoConvertersTest {
                         "user",
                         new NameMatcher(ImmutableList.of("User", "Parent")),
                         "id",
-                        new NameMatcher(ImmutableList.of("X-Google-Id"), true))),
+                        new NameMatcher(ImmutableList.of("X-Google-Id")))),
                 new GrpcKeyBuilder(
                     ImmutableList.of(new Name("service1")),
                     ImmutableMap.of(
                         "user",
                         new NameMatcher(ImmutableList.of("User", "Parent")),
                         "password",
-                        new NameMatcher(ImmutableList.of("Password"), true))),
+                        new NameMatcher(ImmutableList.of("Password")))),
                 new GrpcKeyBuilder(
                     ImmutableList.of(new Name("service3")),
                     ImmutableMap.of(

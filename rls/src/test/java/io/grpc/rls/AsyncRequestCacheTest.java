@@ -53,7 +53,7 @@ public class AsyncRequestCacheTest {
   @SuppressWarnings("unchecked")
   private final RemovalListener<String, ListenableFuture<String>> removalListener =
       mock(RemovalListener.class);
-  private final AsyncRequestCache3<String, String> cache = new TestAsyncRlsCache();
+  private final AsyncRequestCache2<String, String> cache = new TestAsyncRlsCache();
 
   @Test
   public void cache_fullCycle() throws Exception {
@@ -150,7 +150,7 @@ public class AsyncRequestCacheTest {
     assertThat(removalNotice.getCause()).isEqualTo(RemovalCause.EXPIRED);
   }
 
-  private final class TestAsyncRlsCache extends AsyncRequestCache3<String, String> {
+  private final class TestAsyncRlsCache extends AsyncRequestCache2<String, String> {
 
     private final ScheduledExecutorService ses = fakeClock.getScheduledExecutorService();
     private final AtomicLong version = new AtomicLong();
