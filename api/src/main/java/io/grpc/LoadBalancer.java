@@ -216,7 +216,7 @@ public abstract class LoadBalancer {
      * Gets the server addresses.
      *
      * @since 1.21.0
-     */
+*/
     public List<EquivalentAddressGroup> getAddresses() {
       return addresses;
     }

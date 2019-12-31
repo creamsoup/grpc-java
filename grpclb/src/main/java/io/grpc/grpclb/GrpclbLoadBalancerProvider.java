@@ -80,6 +80,8 @@ public final class GrpclbLoadBalancerProvider extends LoadBalancerProvider {
     if (rawLoadBalancingPolicyConfig == null) {
       return ConfigOrError.fromConfig(DEFAULT_MODE);
     }
+    String childPolicyConfigTargetFieldName =
+        (String) rawLoadBalancingPolicyConfig.get("child_policy_config_target_field_name");
     List<?> rawChildPolicies = getList(rawLoadBalancingPolicyConfig, "childPolicy");
     if (rawChildPolicies == null) {
       return ConfigOrError.fromConfig(DEFAULT_MODE);

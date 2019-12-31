@@ -29,9 +29,11 @@ import io.grpc.rls.AdaptiveThrottler.Ticker;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Future;
 import javax.annotation.CheckReturnValue;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
+import org.checkerframework.checker.units.qual.K;
 
 /**
  * An AsyncRequestCache is a cache for expensive RPC call. All the methods in this class are non
@@ -44,7 +46,7 @@ import javax.annotation.concurrent.ThreadSafe;
  * between staled and max), AsyncRequestCache will asynchronously refresh the entry.
  */
 @ThreadSafe
-abstract class AsyncRequestCache2<K, V> {
+abstract class AsyncRequestCache2<K, V extends ListenableFuture> {
 
   private final LinkedHashMap<K, CacheEntry> cache = new LinkedHashMap<K, CacheEntry>() {
     @Override
@@ -62,7 +64,7 @@ abstract class AsyncRequestCache2<K, V> {
   private final long staleAgeMillis;
   private final long callTimeoutMillis;
   private final int maxSize;
-  private final RemovalListener<K, ListenableFuture<V>> removalListener;
+  private final RemovalListener<K, V> removalListener;
 
   AsyncRequestCache2(
       Executor executor,
@@ -94,7 +96,7 @@ abstract class AsyncRequestCache2<K, V> {
       long maxCacheSize,
       long callTimeoutMillis,
       Ticker ticker,
-      final RemovalListener<K, ListenableFuture<V>> removalListener) {
+      final RemovalListener<K, V> removalListener) {
     this.executor = checkNotNull(executor, "executor");
     checkState(maxAgeMillis > 0, "maxAgeMillis should be positive");
     checkState(staleAgeMillis > 0, "staleAgeMillis should be positive");
@@ -113,7 +115,7 @@ abstract class AsyncRequestCache2<K, V> {
 
   /** Performs an async RPC call if cached value doesn't exists. */
   @CheckReturnValue
-  protected abstract ListenableFuture<V> rpcCall(K key);
+  protected abstract V rpcCall(K key);
 
   /**
    * Returns the value associated with {@code key} in this cache, obtaining that value from {@code
@@ -122,7 +124,7 @@ abstract class AsyncRequestCache2<K, V> {
    * Callers may wait for the future if necessary.
    */
   @CheckReturnValue
-  public final synchronized ListenableFuture<V> get(final K key) {
+  public final synchronized V get(final K key) {
     final CacheEntry cacheEntry;
     cacheEntry = cache.get(key);
     if (cacheEntry == null) {
@@ -162,7 +164,7 @@ abstract class AsyncRequestCache2<K, V> {
 
   private CacheEntry populateCache(K key, @Nullable CacheEntry staledEntry) {
     // all the put is though this method, perform clean up
-    final ListenableFuture<V> future = rpcCall(key);
+    final V future = rpcCall(key);
     final CacheEntry cacheEntry = new CacheEntry(key, future, staledEntry);
     future.addListener(
         new Runnable() {
@@ -173,7 +175,7 @@ abstract class AsyncRequestCache2<K, V> {
             }
 
             try {
-              V unused = future.get();
+              Object unused = future.get();
               // update cache's internal states when call is successfully finished
               long nowInMillis = ticker.nowInMillis();
               cacheEntry.expireTime = nowInMillis + maxAgeMillis;
@@ -226,7 +228,7 @@ abstract class AsyncRequestCache2<K, V> {
 
   private final class CacheEntry {
     final K key;
-    final ListenableFuture<V> value;
+    final V value;
     boolean refreshInitiated = false;
 
     long expireTime;
@@ -234,11 +236,11 @@ abstract class AsyncRequestCache2<K, V> {
     CallStatus status = CallStatus.PENDING;
 
     @Nullable
-    final ListenableFuture<V> staledValue;
+    final V staledValue;
     final long staledValueExpireTime;
 
 
-    CacheEntry(K key, ListenableFuture<V> value, @Nullable CacheEntry staledEntry) {
+    CacheEntry(K key, V value, @Nullable CacheEntry staledEntry) {
       this.key = checkNotNull(key, "key");
       this.value = checkNotNull(value, "value");
       this.staledValue = staledEntry != null ? staledEntry.value : null;
@@ -253,7 +255,7 @@ abstract class AsyncRequestCache2<K, V> {
      * old available cache entry, it can still returns previous value until previous value is
      * expired or new value is available.
      */
-    public ListenableFuture<V> getValue() {
+    public V getValue() {
       if (!value.isDone()
           && !value.isCancelled()
           && staledValue != null

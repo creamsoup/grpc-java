@@ -19,11 +19,95 @@ package io.grpc.rls;
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.NameResolver.ConfigOrError;
+import io.grpc.Status;
 import io.grpc.internal.JsonParser;
 import java.io.IOException;
 import java.util.Map;
 
 public class RlsLoadBalancerProvider extends LoadBalancerProvider {
+
+  private static final String TEST_RLS_CONFIG = "{\n"
+      + "  \"route_lookup_config\": {\n"
+      + "    \"grpcKeyBuilders\": [\n"
+      + "      {\n"
+      + "        \"names\": [\n"
+      + "          {\n"
+      + "            \"service\": \"service1\",\n"
+      + "            \"method\": \"create\"\n"
+      + "          }\n"
+      + "        ],\n"
+      + "        \"headers\": {\n"
+      + "          \"user\": {\n"
+      + "            \"names\": [\n"
+      + "              \"User\",\n"
+      + "              \"Parent\"\n"
+      + "            ],\n"
+      + "            \"optional\": false\n"
+      + "          },\n"
+      + "          \"id\": {\n"
+      + "            \"names\": [\n"
+      + "              \"X-Google-Id\"\n"
+      + "            ],\n"
+      + "            \"optional\": true\n"
+      + "          }\n"
+      + "        }\n"
+      + "      },\n"
+      + "      {\n"
+      + "        \"names\": [\n"
+      + "          {\n"
+      + "            \"service\": \"service1\",\n"
+      + "            \"method\": \"*\"\n"
+      + "          }\n"
+      + "        ],\n"
+      + "        \"headers\": {\n"
+      + "          \"user\": {\n"
+      + "            \"names\": [\n"
+      + "              \"User\",\n"
+      + "              \"Parent\"\n"
+      + "            ],\n"
+      + "            \"optional\": false\n"
+      + "          },\n"
+      + "          \"password\": {\n"
+      + "            \"names\": [\n"
+      + "              \"Password\"\n"
+      + "            ],\n"
+      + "            \"optional\": true\n"
+      + "          }\n"
+      + "        }\n"
+      + "      },\n"
+      + "      {\n"
+      + "        \"names\": [\n"
+      + "          {\n"
+      + "            \"service\": \"service3\",\n"
+      + "            \"method\": \"*\"\n"
+      + "          }\n"
+      + "        ],\n"
+      + "        \"headers\": {\n"
+      + "          \"user\": {\n"
+      + "            \"names\": [\n"
+      + "              \"User\",\n"
+      + "              \"Parent\"\n"
+      + "            ],\n"
+      + "            \"optional\": false\n"
+      + "          }\n"
+      + "        }\n"
+      + "      }\n"
+      + "    ],\n"
+      + "    \"lookupService\": \"service1\",\n"
+      + "    \"lookupServiceTimeout\": 2,\n"
+      + "    \"maxAge\": 300,\n"
+      + "    \"staleAge\": 240,\n"
+      + "    \"cacheSize\": 1000,\n"
+      + "    \"defaultTarget\": \"us_east_1.cloudbigtable.googleapis.com\",\n"
+      + "    \"requestProcessingStrategy\": \"ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS\"\n"
+      + "  },\n"
+      + "  \"child_policy\": [\n"
+      + "    {\n"
+      + "      \"grpclb\": {}\n"
+      + "    }\n"
+      + "  ],\n"
+      + "  \"child_policy_config_target_field_name\": \"target\"\n"
+      + "}";
 
   @Override
   public boolean isAvailable() {
@@ -48,102 +132,25 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
   }
 
   @Override
+  @SuppressWarnings("unchecked") // for testing json
   public ConfigOrError parseLoadBalancingPolicyConfig(Map<String, ?> rawLoadBalancingConfigPolicy) {
-    /*
     try {
-      return ConfigOrError.fromConfig(RlsLbPolicyConfiguration.from(rawLoadBalancingConfigPolicy));
+      // TODO removeme, ignoring whatever is passing and overwrite to test json
+      rawLoadBalancingConfigPolicy = (Map<String, ?>) JsonParser.parse(TEST_RLS_CONFIG);
+    } catch (IOException ex) {
+      ex.printStackTrace();
+    }
+
+    try {
+      return ConfigOrError.fromConfig(
+          new LbPolicyConfiguration(
+              new RlsProtoConverters.RouteLookupConfigConverter()
+                  .convert(rawLoadBalancingConfigPolicy)));
     } catch (Exception e) {
       return ConfigOrError.fromError(
           Status.INVALID_ARGUMENT
               .withDescription("can't parse config: " + e.getMessage())
               .withCause(e));
-    } */
-    try {
-      return ConfigOrError.fromConfig(JsonParser.parse(
-          "{\n"
-              + "  \"route_lookup_config\": {\n"
-              + "    \"grpcKeyBuilders\": [\n"
-              + "      {\n"
-              + "        \"names\": [\n"
-              + "          {\n"
-              + "            \"service\": \"service1\",\n"
-              + "            \"method\": \"create\"\n"
-              + "          }\n"
-              + "        ],\n"
-              + "        \"headers\": {\n"
-              + "          \"user\": {\n"
-              + "            \"names\": [\n"
-              + "              \"User\",\n"
-              + "              \"Parent\"\n"
-              + "            ],\n"
-              + "            \"optional\": false\n"
-              + "          },\n"
-              + "          \"id\": {\n"
-              + "            \"names\": [\n"
-              + "              \"X-Google-Id\"\n"
-              + "            ],\n"
-              + "            \"optional\": true\n"
-              + "          }\n"
-              + "        }\n"
-              + "      },\n"
-              + "      {\n"
-              + "        \"names\": [\n"
-              + "          {\n"
-              + "            \"service\": \"service1\",\n"
-              + "            \"method\": \"*\"\n"
-              + "          }\n"
-              + "        ],\n"
-              + "        \"headers\": {\n"
-              + "          \"user\": {\n"
-              + "            \"names\": [\n"
-              + "              \"User\",\n"
-              + "              \"Parent\"\n"
-              + "            ],\n"
-              + "            \"optional\": false\n"
-              + "          },\n"
-              + "          \"password\": {\n"
-              + "            \"names\": [\n"
-              + "              \"Password\"\n"
-              + "            ],\n"
-              + "            \"optional\": true\n"
-              + "          }\n"
-              + "        }\n"
-              + "      },\n"
-              + "      {\n"
-              + "        \"names\": [\n"
-              + "          {\n"
-              + "            \"service\": \"service3\",\n"
-              + "            \"method\": \"*\"\n"
-              + "          }\n"
-              + "        ],\n"
-              + "        \"headers\": {\n"
-              + "          \"user\": {\n"
-              + "            \"names\": [\n"
-              + "              \"User\",\n"
-              + "              \"Parent\"\n"
-              + "            ],\n"
-              + "            \"optional\": false\n"
-              + "          }\n"
-              + "        }\n"
-              + "      }\n"
-              + "    ],\n"
-              + "    \"lookupService\": \"service1\",\n"
-              + "    \"lookupServiceTimeout\": 2,\n"
-              + "    \"maxAge\": 300,\n"
-              + "    \"staleAge\": 240,\n"
-              + "    \"cacheSize\": 1000,\n"
-              + "    \"defaultTarget\": \"us_east_1.cloudbigtable.googleapis.com\",\n"
-              + "    \"requestProcessingStrategy\": \"ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS\"\n"
-              + "  },\n"
-              + "  \"child_policy\": [\n"
-              + "    {\n"
-              + "      \"grpclb\": {}\n"
-              + "    }\n"
-              + "  ],\n"
-              + "  \"child_policy_config_target_field_name\": \"target\"\n"
-              + "}"));
-    } catch (IOException e) {
-      throw new RuntimeException("Invalid fake service config", e);
     }
   }
 }

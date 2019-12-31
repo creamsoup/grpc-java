@@ -17,11 +17,18 @@
 package io.grpc.rls;
 
 import com.google.common.util.concurrent.ListenableFuture;
+import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import io.grpc.rls.RlsProtoData.RouteLookupResponse;
+import java.util.concurrent.Executor;
 
 interface RouteLookupClient {
-  ListenableFuture<RouteLookupResponse> routeLookup(RouteLookupRequest key);
+  RouteLookupInfo routeLookup(RouteLookupRequest key);
 
   void shutdown();
+
+  // maybe abstract class
+  interface RouteLookupInfo extends ListenableFuture<RouteLookupResponse> {
+    ChildPolicyWrapper getChildPolicyWrapper();
+  }
 }

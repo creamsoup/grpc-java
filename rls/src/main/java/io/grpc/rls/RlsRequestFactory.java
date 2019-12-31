@@ -16,7 +16,7 @@
 
 package io.grpc.rls;
 
-import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Table;
@@ -26,13 +26,15 @@ import io.grpc.rls.RlsProtoData.Name;
 import io.grpc.rls.RlsProtoData.NameMatcher;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import javax.annotation.CheckReturnValue;
 
+/**
+ * A RlsRequestFactory creates {@link RouteLookupRequest} using key builder map from {@link
+ * RouteLookupConfig}.
+ */
 public final class RlsRequestFactory {
 
   // table of Path(serviceName.methodName or serviceName.*), rls request headerName, header fields
@@ -64,12 +66,10 @@ public final class RlsRequestFactory {
   }
 
   @CheckReturnValue
-  public RouteLookupRequest create(String url, Metadata metadata) throws URISyntaxException {
-    URI uri = new URI(url);
-    String path = uri.getPath();
-    checkState(path != null && path.length() > 0, "Invalid path in the url: %s", url);
-    // remove leading /
-    path = path.substring(1);
+  public RouteLookupRequest create(String target, String path, Metadata metadata) {
+    checkNotNull(target, "target");
+    checkNotNull(path, "path");
+    path = path.substring(1);  // removing leading '/'
     Map<String, NameMatcher> keyBuilder = keyBuilderTable.row(path);
     // if no matching keyBuilder found, fall back to wildcard match (ServiceName/*)
     if (keyBuilder.isEmpty()) {
@@ -77,7 +77,7 @@ public final class RlsRequestFactory {
       keyBuilder = keyBuilderTable.row(service + "*");
     }
     Map<String, String> rlsRequestHeaders = createRequestHeaders(metadata, keyBuilder);
-    return new RouteLookupRequest(uri.getHost(), path, "grpc", rlsRequestHeaders);
+    return new RouteLookupRequest(target, path, "grpc", rlsRequestHeaders);
   }
 
   private Map<String, String> createRequestHeaders(

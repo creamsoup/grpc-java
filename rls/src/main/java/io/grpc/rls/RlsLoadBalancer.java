@@ -22,15 +22,18 @@ import io.grpc.ExperimentalApi;
 import io.grpc.LoadBalancer;
 import io.grpc.Status;
 
-@ExperimentalApi("TOOD")
+@ExperimentalApi("TODO")
 class RlsLoadBalancer extends LoadBalancer {
 
   private final Helper helper;
   private final RouteLookupClient client;
+  private final LbPolicyConfiguration lbPolicyConfiguration;
 
-  RlsLoadBalancer(Helper helper, RouteLookupClient client) {
+  RlsLoadBalancer(
+      Helper helper, RouteLookupClient client, LbPolicyConfiguration lbPolicyConfiguration) {
     this.helper = checkNotNull(helper, "helper");
     this.client = checkNotNull(client, "client");
+    this.lbPolicyConfiguration = checkNotNull(lbPolicyConfiguration, "lbPolicyConfiguration");
   }
 
   @Override
