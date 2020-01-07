@@ -16,18 +16,24 @@
 
 package io.grpc.rls;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
 import io.grpc.internal.JsonParser;
+import io.grpc.internal.JsonUtil;
+import io.grpc.rls.LbPolicyConfiguration.LoadBalancingPolicy;
+import io.grpc.rls.RlsProtoConverters.RouteLookupConfigConverter;
+import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import java.io.IOException;
 import java.util.Map;
 
 public class RlsLoadBalancerProvider extends LoadBalancerProvider {
 
   private static final String TEST_RLS_CONFIG = "{\n"
-      + "  \"route_lookup_config\": {\n"
+      + "  \"routeLookupConfig\": {\n"
       + "    \"grpcKeyBuilders\": [\n"
       + "      {\n"
       + "        \"names\": [\n"
@@ -101,12 +107,12 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
       + "    \"defaultTarget\": \"us_east_1.cloudbigtable.googleapis.com\",\n"
       + "    \"requestProcessingStrategy\": \"ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS\"\n"
       + "  },\n"
-      + "  \"child_policy\": [\n"
+      + "  \"childPolicy\": [\n"
       + "    {\n"
       + "      \"grpclb\": {}\n"
       + "    }\n"
       + "  ],\n"
-      + "  \"child_policy_config_target_field_name\": \"target\"\n"
+      + "  \"childPolicyConfigTargetFieldName\": \"target\"\n"
       + "}";
 
   @Override
@@ -122,13 +128,13 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
 
   @Override
   public String getPolicyName() {
-    return "rlslb";
+    return "rls";
   }
 
   @Override
   public LoadBalancer newLoadBalancer(LoadBalancer.Helper helper) {
     //TODO also needs key builder map, request cache, lb policy config
-    return new RlsLoadBalancer(helper, null);
+    return new RlsLoadBalancer(helper);
   }
 
   @Override
@@ -142,10 +148,14 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
     }
 
     try {
-      return ConfigOrError.fromConfig(
-          new LbPolicyConfiguration(
-              new RlsProtoConverters.RouteLookupConfigConverter()
-                  .convert(rawLoadBalancingConfigPolicy)));
+      RouteLookupConfig routeLookupConfig = new RouteLookupConfigConverter()
+          .convert(JsonUtil.getObject(rawLoadBalancingConfigPolicy, "routeLookupConfig"));
+      LoadBalancingPolicy lbPolicy = new LoadBalancingPolicy(
+          JsonUtil.getString(rawLoadBalancingConfigPolicy, "childPolicyConfigTargetFieldName"),
+          JsonUtil.checkObjectList(
+              checkNotNull(JsonUtil.getList(rawLoadBalancingConfigPolicy, "childPolicy"))));
+
+      return ConfigOrError.fromConfig(new LbPolicyConfiguration(routeLookupConfig, lbPolicy));
     } catch (Exception e) {
       return ConfigOrError.fromError(
           Status.INVALID_ARGUMENT

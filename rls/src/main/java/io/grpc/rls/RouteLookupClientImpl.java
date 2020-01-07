@@ -24,20 +24,14 @@ import com.google.common.base.Converter;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.SettableFuture;
-import io.grpc.ConnectivityState;
-import io.grpc.LoadBalancer.PickResult;
-import io.grpc.LoadBalancer.PickSubchannelArgs;
-import io.grpc.LoadBalancer.SubchannelPicker;
+import io.grpc.LoadBalancer.Helper;
 import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
-import io.grpc.Status;
 import io.grpc.lookup.v1alpha1.RouteLookupServiceGrpc;
 import io.grpc.lookup.v1alpha1.RouteLookupServiceGrpc.RouteLookupServiceStub;
 import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.RlsProtoConverters.RouteLookupResponseConverter;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import io.grpc.rls.RlsProtoData.RouteLookupResponse;
-import io.grpc.rls.RouteLookupClient.RouteLookupInfo;
 import io.grpc.rls.Throttler.ThrottledException;
 import io.grpc.stub.StreamObserver;
 import java.util.concurrent.ExecutionException;
@@ -47,7 +41,7 @@ import java.util.concurrent.TimeoutException;
 import javax.annotation.Nullable;
 
 final class RouteLookupClientImpl
-    extends AsyncRequestCache2<RouteLookupRequest, RouteLookupInfo>
+    extends AsyncRequestCache2<RouteLookupRequest, RouteLookupClientImpl.RouteLookupInfoImpl>
     implements RouteLookupClient {
 
   private static final Converter<RouteLookupRequest, io.grpc.lookup.v1alpha1.RouteLookupRequest>
@@ -58,7 +52,6 @@ final class RouteLookupClientImpl
   private final Throttler throttler;
   private final ManagedChannel channel;
   private final RouteLookupServiceStub stub;
-  private final LbPolicyConfiguration lbPolicyConfiguration;
 
   private RouteLookupClientImpl(Builder builder) {
     super(
@@ -68,24 +61,22 @@ final class RouteLookupClientImpl
         builder.maxCacheSize,
         builder.callTimeoutMillis);
     this.throttler = builder.throttler;
-    // TODO use directpath, need channel credentials etc.
-    channel = ManagedChannelBuilder.forTarget(builder.target).build();
+    channel = builder.oobChannel;
     stub = RouteLookupServiceGrpc.newStub(channel);
-    lbPolicyConfiguration = checkNotNull(builder.lbPolicyConfiguration, "lbPolicyConfiguration");
   }
 
   @Override
-  public RouteLookupInfo routeLookup(RouteLookupRequest request) {
+  public RouteLookupInfo routeLookup(RouteLookupRequest request, Helper helper) {
     // return get(request);
     // TODO use above, this is not using cache for testing / debug purpose
-    return rpcCall(request);
+    return rpcCall(request, helper);
   }
 
   @Override
-  protected RouteLookupInfo rpcCall(RouteLookupRequest request) {
+  protected RouteLookupInfoImpl rpcCall(RouteLookupRequest request, Helper helper) {
     final SettableFuture<RouteLookupResponse> response = SettableFuture.create();
     if (throttler.shouldThrottle()) {
-      return RouteLookupInfoImpl.createThrottled(lbPolicyConfiguration, request);
+      return RouteLookupInfoImpl.createThrottled(request);
     }
     io.grpc.lookup.v1alpha1.RouteLookupRequest rlsRequest = reqConverter.convert(request);
     stub.routeLookup(rlsRequest, new StreamObserver<io.grpc.lookup.v1alpha1.RouteLookupResponse>() {
@@ -104,12 +95,16 @@ final class RouteLookupClientImpl
         throttler.registerBackendResponse(true);
       }
     });
-    return RouteLookupInfoImpl.create(lbPolicyConfiguration, request, response);
+    return RouteLookupInfoImpl.create(request, response);
   }
 
   @Override
   public void shutdown() {
     channel.shutdown();
+  }
+
+  public static Builder builder() {
+    return new Builder();
   }
 
   public static final class Builder {
@@ -123,7 +118,7 @@ final class RouteLookupClientImpl
     private long staleAgeMillis = TimeUnit.MINUTES.toMillis(4);
     private long maxCacheSize = 128;
     private long callTimeoutMillis = 100L;
-    private LbPolicyConfiguration lbPolicyConfiguration;
+    private ManagedChannel oobChannel;
 
     public Builder setTarget(String target) {
       this.target = checkNotNull(target, "target");
@@ -168,8 +163,8 @@ final class RouteLookupClientImpl
       return this;
     }
 
-    public Builder setLbPolicyConfiguration(LbPolicyConfiguration lbPolicyConfiguration) {
-      this.lbPolicyConfiguration = checkNotNull(lbPolicyConfiguration, "lbPolicyConfiguration");
+    public Builder setChannel(ManagedChannel oobChannel) {
+      this.oobChannel = oobChannel;
       return this;
     }
 
@@ -211,25 +206,17 @@ final class RouteLookupClientImpl
     }
 
     public static RouteLookupInfoImpl create(
-        LbPolicyConfiguration lbPolicyConfiguration,
-        RouteLookupRequest request, ListenableFuture<RouteLookupResponse> response) {
-      // handle pending
+        RouteLookupRequest request,
+        ListenableFuture<RouteLookupResponse> response) {
       ChildPolicyWrapper wrapper = new ChildPolicyWrapper(request.getServer());
-      wrapper.setPicker(new PendingPicker());
-      wrapper.setConnectivityState(ConnectivityState.CONNECTING); // or idle?
-      wrapper.setPolicy(lbPolicyConfiguration.getLoadBalancingPolicy());
       return new RouteLookupInfoImpl(response, wrapper);
     }
 
-    public static RouteLookupInfo createThrottled(
-        LbPolicyConfiguration lbPolicyConfiguration, RouteLookupRequest request) {
+    public static RouteLookupInfoImpl createThrottled(RouteLookupRequest request) {
       SettableFuture<RouteLookupResponse> throttledFuture = SettableFuture.create();
       ThrottledException throttledException = new ThrottledException();
       throttledFuture.setException(throttledException);
       ChildPolicyWrapper wrapper = new ChildPolicyWrapper(request.getServer());
-      wrapper.setPicker(new ThrottledPicker());
-      wrapper.setPolicy(lbPolicyConfiguration.getLoadBalancingPolicy());
-      // TODO: maybe other values in ChildPolicyWrapper
       return new RouteLookupInfoImpl(throttledFuture, wrapper);
     }
 
@@ -267,20 +254,6 @@ final class RouteLookupClientImpl
     public RouteLookupResponse get(long timeout, TimeUnit unit)
         throws InterruptedException, ExecutionException, TimeoutException {
       return routeLookupResponse.get(timeout, unit);
-    }
-
-    static final class ThrottledPicker extends SubchannelPicker {
-      @Override
-      public PickResult pickSubchannel(PickSubchannelArgs args) {
-        return PickResult.withError(Status.RESOURCE_EXHAUSTED.withDescription("Request throttled"));
-      }
-    }
-
-    static final class PendingPicker extends SubchannelPicker {
-      @Override
-      public PickResult pickSubchannel(PickSubchannelArgs args) {
-        return PickResult.withNoResult();
-      }
     }
   }
 }

@@ -19,11 +19,17 @@ package io.grpc.rls;
 import static com.google.common.base.Preconditions.checkArgument;
 
 import com.google.common.base.Converter;
+import io.grpc.internal.JsonUtil;
 import io.grpc.lookup.v1alpha1.RouteLookupRequest;
 import io.grpc.lookup.v1alpha1.RouteLookupResponse;
 import io.grpc.lookup.v1alpha1.RouteLookupResponse.Header;
+import io.grpc.rls.RlsProtoData.GrpcKeyBuilder;
+import io.grpc.rls.RlsProtoData.Name;
+import io.grpc.rls.RlsProtoData.NameMatcher;
+import io.grpc.rls.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -116,9 +122,66 @@ final class RlsProtoConverters {
   }
 
   // This one will be from ServiceConfig (json)
-  static final class RouteLookupConfigConverter {
-    public RouteLookupConfig convert(Map<String, ?> json) {
+  static final class RouteLookupConfigConverter
+      extends Converter<Map<String, ?>, RouteLookupConfig> {
+
+    @Override
+    protected RouteLookupConfig doForward(Map<String, ?> json) {
+      List<GrpcKeyBuilder> grpcKeyBuilders =
+          GrpcKeyBuilderConverter
+              .covertAll(JsonUtil.checkObjectList(JsonUtil.getList(json, "grpcKeyBuilders")));
+      String lookupService = JsonUtil.getString(json, "lookupService");
+      long timeout = JsonUtil.getDouble(json, "lookupServiceTimeout").longValue();
+      long maxAge = JsonUtil.getDouble(json, "maxAge").longValue();
+      long staleAge = JsonUtil.getDouble(json, "staleAge").longValue();
+      long cacheSize = JsonUtil.getDouble(json, "cacheSize").longValue();
+      String defaultTarget = JsonUtil.getString(json, "defaultTarget");
+      RequestProcessingStrategy strategy =
+          RequestProcessingStrategy
+              .valueOf(JsonUtil.getString(json, "requestProcessingStrategy").toUpperCase());
+      return new RouteLookupConfig(
+          grpcKeyBuilders,
+          lookupService,
+          timeout,
+          maxAge,
+          staleAge,
+          cacheSize,
+          defaultTarget,
+          strategy);
+    }
+
+    @Override
+    protected Map<String, Object> doBackward(RouteLookupConfig routeLookupConfig) {
       return null;
+    }
+  }
+
+  private static final class GrpcKeyBuilderConverter {
+    public static List<GrpcKeyBuilder> covertAll(List<Map<String, ?>> keyBuilders) {
+      List<GrpcKeyBuilder> keyBuilderList = new ArrayList<>();
+      for (Map<String, ?> keyBuilder : keyBuilders) {
+        keyBuilderList.add(convert(keyBuilder));
+      }
+      return keyBuilderList;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static GrpcKeyBuilder convert(Map<String, ?> keyBuilder) {
+      List<Map<String, ?>> rawNames =
+          JsonUtil.checkObjectList(JsonUtil.getList(keyBuilder, "names"));
+      List<Name> names = new ArrayList<>();
+      for (Map<String, ?> rawName : rawNames) {
+        names.add(
+            new Name(
+                JsonUtil.getString(rawName, "service"), JsonUtil.getString(rawName, "method")));
+      }
+      Map<String, ?> rawHeaders = JsonUtil.getObject(keyBuilder, "headers");
+      Map<String, NameMatcher> nameMatcherMap = new HashMap<>();
+      for (Map.Entry<String, ?> rawHeader : rawHeaders.entrySet()) {
+        NameMatcher matcher = new NameMatcher((List<String>) rawHeader.getValue());
+        nameMatcherMap.put(rawHeader.getKey(), matcher);
+      }
+      return new GrpcKeyBuilder(names, nameMatcherMap);
     }
   }
 }

@@ -24,21 +24,20 @@ import com.google.common.cache.RemovalCause;
 import com.google.common.cache.RemovalListener;
 import com.google.common.cache.RemovalNotification;
 import com.google.common.util.concurrent.ListenableFuture;
+import io.grpc.LoadBalancer.Helper;
 import io.grpc.rls.AdaptiveThrottler.SystemTicker;
 import io.grpc.rls.AdaptiveThrottler.Ticker;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
-import java.util.concurrent.Future;
 import javax.annotation.CheckReturnValue;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
-import org.checkerframework.checker.units.qual.K;
 
 /**
  * An AsyncRequestCache is a cache for expensive RPC call. All the methods in this class are non
- * blocking. This async behavior is reflected to the {@link #get(Object)} method, when the cache
- * is requested but not fully populated, it returns uncompleted {@link ListenableFuture} which
+ * blocking. This async behavior is reflected to the {@link #get(Object, Helper)} method, when the
+ * cache is requested but not fully populated, it returns uncompleted {@link ListenableFuture} which
  * allows the users to wait or ignore until the computation is completed.
  *
  * <p>On top of regular cache behavior, it supports max age and stale state of cache value. The key
@@ -115,7 +114,7 @@ abstract class AsyncRequestCache2<K, V extends ListenableFuture> {
 
   /** Performs an async RPC call if cached value doesn't exists. */
   @CheckReturnValue
-  protected abstract V rpcCall(K key);
+  protected abstract V rpcCall(K key, Helper helper);
 
   /**
    * Returns the value associated with {@code key} in this cache, obtaining that value from {@code
@@ -124,11 +123,11 @@ abstract class AsyncRequestCache2<K, V extends ListenableFuture> {
    * Callers may wait for the future if necessary.
    */
   @CheckReturnValue
-  public final synchronized V get(final K key) {
+  public final synchronized V get(final K key, Helper helper) {
     final CacheEntry cacheEntry;
     cacheEntry = cache.get(key);
     if (cacheEntry == null) {
-      return populateCache(key).getValue();
+      return populateCache(key, helper).getValue();
     }
 
     if (cacheEntry.status == CallStatus.PENDING) {
@@ -139,14 +138,14 @@ abstract class AsyncRequestCache2<K, V extends ListenableFuture> {
     if (cacheEntry.expireTime <= now) {
       // Cache is expired
       if (!cacheEntry.refreshInitiated) {
-        return populateCache(key).getValue();
+        return populateCache(key, helper).getValue();
       }
       // Impossible, because refresh is replacing the old CacheEntry
       throw new AssertionError("This is a bug, please report an issue.");
     } else if (cacheEntry.staleTime <= now) {
       // current entry is staled, but not expired yet.
       if (!cacheEntry.refreshInitiated) {
-        refresh(key, cacheEntry);
+        refresh(key, cacheEntry, helper);
       }
       return cacheEntry.getValue();
     }
@@ -158,13 +157,13 @@ abstract class AsyncRequestCache2<K, V extends ListenableFuture> {
   public synchronized void cleanUp() {
   }
 
-  private CacheEntry populateCache(K key) {
-    return populateCache(key, null);
+  private CacheEntry populateCache(K key, Helper helper) {
+    return populateCache(key, null, helper);
   }
 
-  private CacheEntry populateCache(K key, @Nullable CacheEntry staledEntry) {
+  private CacheEntry populateCache(final K key, @Nullable CacheEntry staledEntry, Helper helper) {
     // all the put is though this method, perform clean up
-    final V future = rpcCall(key);
+    final V future = rpcCall(key, helper);
     final CacheEntry cacheEntry = new CacheEntry(key, future, staledEntry);
     future.addListener(
         new Runnable() {
@@ -182,7 +181,9 @@ abstract class AsyncRequestCache2<K, V extends ListenableFuture> {
               cacheEntry.staleTime = nowInMillis + staleAgeMillis;
               cacheEntry.status = CallStatus.FINISHED;
             } catch (Exception e) {
-              // no-op
+              // failed cache shouldn't be cached
+              // TODO(creamsoup) how to handle if anything waiting for this result???
+              cache.remove(key);
             }
           }
         },
@@ -202,12 +203,12 @@ abstract class AsyncRequestCache2<K, V extends ListenableFuture> {
    * entry2:                        | OV | pending | hasValue | staled |
    * </pre>
    */
-  private void refresh(final K key, CacheEntry oldValue) {
+  private void refresh(final K key, CacheEntry oldValue, Helper helper) {
     if (oldValue.refreshInitiated) {
       return;
     }
     oldValue.refreshInitiated = true;
-    populateCache(key, oldValue);
+    populateCache(key, oldValue, helper);
   }
 
   /**

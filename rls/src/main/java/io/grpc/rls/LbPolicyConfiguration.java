@@ -26,6 +26,7 @@ import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.internal.ObjectPool;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -67,6 +68,11 @@ final class LbPolicyConfiguration {
 
   public LoadBalancingPolicy getLoadBalancingPolicy() {
     return policy;
+  }
+
+  public void cleanup() {
+    // TODO: verify state or something?
+    childPolicyMap.clear();
   }
 
   static final class ChildPolicyWrapper {
@@ -119,10 +125,10 @@ final class LbPolicyConfiguration {
 
   static final class LoadBalancingPolicy {
     private final String childPolicyConfigTargetFieldName;
-    private final Map<String, ?> childPolicies;
+    private final List<Map<String, ?>> childPolicies;
 
     public LoadBalancingPolicy(String childPolicyConfigTargetFieldName,
-        Map<String, ?> childPolicies) {
+        List<Map<String, ?>> childPolicies) {
       this.childPolicyConfigTargetFieldName = childPolicyConfigTargetFieldName;
       this.childPolicies = childPolicies;
     }
@@ -131,7 +137,7 @@ final class LbPolicyConfiguration {
       return childPolicyConfigTargetFieldName;
     }
 
-    public Map<String, ?> getChildPolicies() {
+    public List<Map<String, ?>> getChildPolicies() {
       return childPolicies;
     }
   }

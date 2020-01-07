@@ -17,13 +17,14 @@
 package io.grpc.rls;
 
 import com.google.common.util.concurrent.ListenableFuture;
+import io.grpc.LoadBalancer.Helper;
 import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import io.grpc.rls.RlsProtoData.RouteLookupResponse;
 import java.util.concurrent.Executor;
 
 interface RouteLookupClient {
-  RouteLookupInfo routeLookup(RouteLookupRequest key);
+  RouteLookupInfo routeLookup(RouteLookupRequest key, Helper helper);
 
   void shutdown();
 

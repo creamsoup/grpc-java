@@ -16,56 +16,94 @@
 
 package io.grpc.rls;
 
-import com.google.common.util.concurrent.ListenableFuture;
+import static com.google.common.base.Preconditions.checkNotNull;
+
+import com.google.common.util.concurrent.MoreExecutors;
+import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.PickResult;
 import io.grpc.LoadBalancer.PickSubchannelArgs;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.Status;
+import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import io.grpc.rls.RlsProtoData.RouteLookupResponse;
+import io.grpc.rls.RouteLookupClient.RouteLookupInfo;
 import io.grpc.rls.Throttler.ThrottledException;
 import java.util.concurrent.ExecutionException;
 
 public class RlsPicker extends SubchannelPicker {
 
   private LbPolicyConfiguration lbPolicyConfiguration;
-  private RlsRequestFactory requestFactory;
   private RouteLookupClient rlsClient;
+  private Helper helper;
+  private RlsRequestFactory requestFactory;
   private RequestProcessingStrategy strategy;
-  // TODO: use listenable future to do stuff for above things to LbPolicyConfiguration
+  private State state = State.OKAY;
+  private Status error = null;
+
+  public RlsPicker(
+      LbPolicyConfiguration lbPolicyConfiguration, RouteLookupClient client, Helper helper) {
+    this.lbPolicyConfiguration = lbPolicyConfiguration;
+    this.rlsClient = client;
+    this.helper = helper;
+    this.requestFactory = new RlsRequestFactory(lbPolicyConfiguration.getRouteLookupConfig());
+    this.strategy = lbPolicyConfiguration.getRouteLookupConfig().getRequestProcessingStrategy();
+  }
 
   @Override
   public PickResult pickSubchannel(PickSubchannelArgs args) {
+    if (state == State.ERROR) {
+      return PickResult.withError(error);
+    } else if (state == State.TRANSIENT_ERROR) {
+      return PickResult.withNoResult();
+    }
+
     String target = args.getMethodDescriptor().getServiceName();
     String path = args.getMethodDescriptor().getFullMethodName();
 
     RouteLookupRequest request = requestFactory.create(target, path, args.getHeaders());
-    ListenableFuture<RouteLookupResponse> response = rlsClient.routeLookup(request);
+    RouteLookupInfo response = rlsClient.routeLookup(request, helper);
 
     if (response.isDone()) {
-      try {
-        return processCacheHit(response.get());
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        // handle wrapping up here
-      } catch (ExecutionException e) {
-        return handleError(e.getCause());
-      }
+      return processCacheHit(response, args);
     }
-    return handlePendingRequest();
+    return handlePendingRequest(request, response, args);
   }
 
-  private PickResult processCacheHit(RouteLookupResponse response) {
+  private PickResult processCacheHit(RouteLookupInfo lookupInfo, PickSubchannelArgs args) {
+    try {
+      RouteLookupResponse unused = lookupInfo.get();
+      // TODO are those errors are possible? if not remove handle error, also make sure this is true
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return handleError(e);
+    } catch (ExecutionException e) {
+      return handleError(e.getCause());
+    }
     // cache hit
-    // delegate to picker from associated child policy? from?
-
-    return PickResult.withSubchannel(null);
+    ChildPolicyWrapper childPolicyWrapper = lookupInfo.getChildPolicyWrapper();
+    // TODO delegate to the picker from the associated child policy.
+    return childPolicyWrapper.getPicker().pickSubchannel(args);
   }
 
-  private PickResult handlePendingRequest() {
-    // reaching here means pending
+  private PickResult handlePendingRequest(
+      RouteLookupRequest request, final RouteLookupInfo response, PickSubchannelArgs args) {
+    // TODO populate subchannel picker etc.
+    response.addListener(new Runnable() {
+      @Override
+      public void run() {
+        if (response.isDone() && !response.isCancelled()) {
+          // This need to be picker of child policy using targetName the target
+          ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
+          childPolicyWrapper.setPicker();
+          childPolicyWrapper.setPolicy();
+          childPolicyWrapper.setConnectivityState();
+          childPolicyWrapper.setHelper(helper);
+        }
+      }
+    }, MoreExecutors.directExecutor());
     switch (strategy) {
       case SYNC_LOOKUP_CLIENT_SEES_ERROR:
         // fall-through
@@ -103,5 +141,19 @@ public class RlsPicker extends SubchannelPicker {
       // TODO: create subchannel using target (also inherit credentials?)
     }
     return PickResult.withSubchannel(fallbackSubchannel);
+  }
+
+  public void propagateError(Status error) {
+    checkNotNull(error, "error");
+    if (error.isOk()) {
+      state = State.TRANSIENT_ERROR;
+    } else {
+      state = State.ERROR;
+      this.error = error;
+    }
+  }
+
+  private enum State {
+    OKAY, TRANSIENT_ERROR, ERROR
   }
 }
