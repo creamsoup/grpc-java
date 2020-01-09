@@ -141,7 +141,7 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
   @SuppressWarnings("unchecked") // for testing json
   public ConfigOrError parseLoadBalancingPolicyConfig(Map<String, ?> rawLoadBalancingConfigPolicy) {
     try {
-      // TODO removeme, ignoring whatever is passing and overwrite to test json
+      // TODO removeme and test with default service config
       rawLoadBalancingConfigPolicy = (Map<String, ?>) JsonParser.parse(TEST_RLS_CONFIG);
     } catch (IOException ex) {
       ex.printStackTrace();

@@ -356,7 +356,7 @@ public abstract class LoadBalancer {
   @Deprecated
   public void handleSubchannelState(
       Subchannel subchannel, ConnectivityStateInfo stateInfo) {
-    // Do nothing.  If the implemetation doesn't implement this, it will get subchannel states from
+    // Do nothing.  If the implementation doesn't implement this, it will get subchannel states from
     // the new API.  We don't throw because there may be forwarding LoadBalancers still plumb this.
   }
 

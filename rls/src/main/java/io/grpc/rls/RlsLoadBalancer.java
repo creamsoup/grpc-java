@@ -24,9 +24,14 @@ import io.grpc.EquivalentAddressGroup;
 import io.grpc.ExperimentalApi;
 import io.grpc.LoadBalancer;
 import io.grpc.ManagedChannel;
+import io.grpc.NameResolver;
 import io.grpc.NameResolver.ConfigOrError;
+import io.grpc.NameResolver.Listener2;
+import io.grpc.NameResolver.ResolutionResult;
 import io.grpc.Status;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.List;
 
 @ExperimentalApi("TODO")
@@ -69,11 +74,10 @@ class RlsLoadBalancer extends LoadBalancer {
       if (oobChannel != null) {
         oobChannel.shutdown();
       }
-      //TODO how to inherit channel creds from parent channel?
       oobChannel = helper.createOobChannel(addresses.get(0), rlsConfig.getLookupService());
       throttler = AdaptiveThrottler.builder().build();
     }
-    RouteLookupClient client =
+    RouteLookupClientImpl client =
         RouteLookupClientImpl.builder()
             .setChannel(oobChannel)
             .setThrottler(throttler)

@@ -20,15 +20,21 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.common.base.Objects;
 import io.grpc.ConnectivityState;
 import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.SubchannelPicker;
+import io.grpc.LoadBalancerProvider;
+import io.grpc.LoadBalancerRegistry;
 import io.grpc.internal.ObjectPool;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * A LbPolicyConfiguration is configuration for RLS to delegate request to other LB implementations.
@@ -82,6 +88,28 @@ final class LbPolicyConfiguration {
     private SubchannelPicker picker;
     private Helper helper;
 
+    private final AtomicLong refCnt = new AtomicLong(1);
+
+    public void acquire() {
+      long currCnt = refCnt.getAndIncrement();
+      if (currCnt <= 0) {
+        refCnt.decrementAndGet();
+        throw new IllegalStateException("Cannot acquired already");
+      }
+    }
+
+    public void release() {
+      long currCnt = refCnt.decrementAndGet();
+      if (currCnt == 0) {
+        policy = null;
+        connectivityState = null;
+        picker = null;
+        helper = null;
+      } else if (currCnt < 0) {
+        throw new IllegalStateException("Cannot release already released object");
+      }
+    }
+
     public ChildPolicyWrapper(String target) {
       this.target = target;
     }
@@ -125,20 +153,66 @@ final class LbPolicyConfiguration {
 
   static final class LoadBalancingPolicy {
     private final String childPolicyConfigTargetFieldName;
-    private final List<Map<String, ?>> childPolicies;
+    private final Map<String, ?> effectiveChildPolicy;
+    private final LoadBalancerProvider effectiveLbProvider;
 
-    public LoadBalancingPolicy(String childPolicyConfigTargetFieldName,
-        List<Map<String, ?>> childPolicies) {
+    public LoadBalancingPolicy(
+        String childPolicyConfigTargetFieldName, List<Map<String, ?>> childPolicies) {
       this.childPolicyConfigTargetFieldName = childPolicyConfigTargetFieldName;
-      this.childPolicies = childPolicies;
+      Map<String, ?> effectiveChildPolicy = null;
+      LoadBalancerProvider effectiveLbProvider = null;
+      List<String> policyTried = new ArrayList<>();
+
+      LoadBalancerRegistry lbRegistry = LoadBalancerRegistry.getDefaultRegistry();
+      for (Map<String, ?> childPolicy : childPolicies) {
+        if (childPolicy.isEmpty()) {
+          continue;
+        }
+        String policyName = childPolicy.keySet().iterator().next();
+        LoadBalancerProvider provider = lbRegistry.getProvider(policyName);
+        if (provider != null) {
+          effectiveLbProvider = provider;
+          effectiveChildPolicy = Collections.unmodifiableMap(childPolicy);
+          break;
+        }
+        policyTried.add(policyName);
+      }
+      checkState(effectiveChildPolicy != null && effectiveLbProvider != null,
+          "no valid childPolicy found, policy tried: %s", policyTried);
+      this.effectiveChildPolicy = effectiveChildPolicy;
+      this.effectiveLbProvider = effectiveLbProvider;
     }
 
     public String getChildPolicyConfigTargetFieldName() {
       return childPolicyConfigTargetFieldName;
     }
 
-    public List<Map<String, ?>> getChildPolicies() {
-      return childPolicies;
+    public Map<String, ?> getEffectiveChildPolicy(String target) {
+      return effectiveChildPolicy;
+    }
+
+    public LoadBalancerProvider getEffectiveLbProvider() {
+      return effectiveLbProvider;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) {
+        return true;
+      }
+      if (o == null || getClass() != o.getClass()) {
+        return false;
+      }
+      LoadBalancingPolicy that = (LoadBalancingPolicy) o;
+      return Objects.equal(childPolicyConfigTargetFieldName, that.childPolicyConfigTargetFieldName)
+          && Objects.equal(effectiveChildPolicy, that.effectiveChildPolicy)
+          && Objects.equal(effectiveLbProvider, that.effectiveLbProvider);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects
+          .hashCode(childPolicyConfigTargetFieldName, effectiveChildPolicy, effectiveLbProvider);
     }
   }
 

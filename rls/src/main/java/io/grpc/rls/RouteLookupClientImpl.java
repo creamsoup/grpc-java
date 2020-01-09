@@ -168,7 +168,7 @@ final class RouteLookupClientImpl
       return this;
     }
 
-    public RouteLookupClient build() {
+    public RouteLookupClientImpl build() {
       checkState(
           maxAgeMillis >= staleAgeMillis,
           "staleAge(%s) should be smaller than maxAge(%s)",

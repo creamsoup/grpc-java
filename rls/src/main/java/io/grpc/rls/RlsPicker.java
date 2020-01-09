@@ -17,26 +17,40 @@
 package io.grpc.rls;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+import static io.grpc.LoadBalancer.ATTR_LOAD_BALANCING_CONFIG;
 
+import com.google.common.collect.UnmodifiableIterator;
 import com.google.common.util.concurrent.MoreExecutors;
+import io.grpc.Attributes;
+import io.grpc.ConnectivityState;
+import io.grpc.EquivalentAddressGroup;
+import io.grpc.LoadBalancer;
+import io.grpc.LoadBalancer.CreateSubchannelArgs;
 import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.PickResult;
 import io.grpc.LoadBalancer.PickSubchannelArgs;
+import io.grpc.LoadBalancer.ResolvedAddresses;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
+import io.grpc.Metadata;
+import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
 import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
+import io.grpc.rls.LbPolicyConfiguration.LoadBalancingPolicy;
 import io.grpc.rls.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import io.grpc.rls.RlsProtoData.RouteLookupResponse;
 import io.grpc.rls.RouteLookupClient.RouteLookupInfo;
 import io.grpc.rls.Throttler.ThrottledException;
+import java.net.InetSocketAddress;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
 public class RlsPicker extends SubchannelPicker {
 
   private LbPolicyConfiguration lbPolicyConfiguration;
-  private RouteLookupClient rlsClient;
+  private RouteLookupClientImpl rlsClient;
   private Helper helper;
   private RlsRequestFactory requestFactory;
   private RequestProcessingStrategy strategy;
@@ -44,7 +58,7 @@ public class RlsPicker extends SubchannelPicker {
   private Status error = null;
 
   public RlsPicker(
-      LbPolicyConfiguration lbPolicyConfiguration, RouteLookupClient client, Helper helper) {
+      LbPolicyConfiguration lbPolicyConfiguration, RouteLookupClientImpl client, Helper helper) {
     this.lbPolicyConfiguration = lbPolicyConfiguration;
     this.rlsClient = client;
     this.helper = helper;
@@ -67,14 +81,16 @@ public class RlsPicker extends SubchannelPicker {
     RouteLookupInfo response = rlsClient.routeLookup(request, helper);
 
     if (response.isDone()) {
+      // TODO: handle refCount childPolicy
       return processCacheHit(response, args);
     }
-    return handlePendingRequest(request, response, args);
+    return handlePendingRequest(response, args);
   }
 
   private PickResult processCacheHit(RouteLookupInfo lookupInfo, PickSubchannelArgs args) {
+    RouteLookupResponse response;
     try {
-      RouteLookupResponse unused = lookupInfo.get();
+      response = lookupInfo.get();
       // TODO are those errors are possible? if not remove handle error, also make sure this is true
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
@@ -84,23 +100,68 @@ public class RlsPicker extends SubchannelPicker {
     }
     // cache hit
     ChildPolicyWrapper childPolicyWrapper = lookupInfo.getChildPolicyWrapper();
-    // TODO delegate to the picker from the associated child policy.
     return childPolicyWrapper.getPicker().pickSubchannel(args);
   }
 
   private PickResult handlePendingRequest(
-      RouteLookupRequest request, final RouteLookupInfo response, PickSubchannelArgs args) {
-    // TODO populate subchannel picker etc.
+      final RouteLookupInfo response, final PickSubchannelArgs args) {
     response.addListener(new Runnable() {
       @Override
       public void run() {
         if (response.isDone() && !response.isCancelled()) {
-          // This need to be picker of child policy using targetName the target
-          ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
-          childPolicyWrapper.setPicker();
-          childPolicyWrapper.setPolicy();
-          childPolicyWrapper.setConnectivityState();
-          childPolicyWrapper.setHelper(helper);
+          try {
+            final RouteLookupResponse rlsResponse = response.get();
+            LoadBalancingPolicy loadBalancingPolicy =
+                lbPolicyConfiguration.getLoadBalancingPolicy();
+            Map<String, ?> childLbPolicyConfig =
+                loadBalancingPolicy.getEffectiveChildPolicy(rlsResponse.getTarget());
+
+            // todo maybe wrap the helper (see design doc helper section)
+            Helper childHelper = helper;
+            final LoadBalancer childLb =
+                loadBalancingPolicy.getEffectiveLbProvider().newLoadBalancer(childHelper);
+            ConfigOrError parsedChildLbPolicy =
+                loadBalancingPolicy.getEffectiveLbProvider()
+                    .parseLoadBalancingPolicyConfig(childLbPolicyConfig);
+            checkState(
+                parsedChildLbPolicy.getError() == null,
+                "invalid child policy: %s",
+                childLbPolicyConfig);
+            childLb.handleResolvedAddresses(
+                ResolvedAddresses.newBuilder()
+                    .setLoadBalancingPolicyConfig(parsedChildLbPolicy.getConfig())
+                    .setAttributes(Attributes.newBuilder()
+                        .set(ATTR_LOAD_BALANCING_CONFIG, childLbPolicyConfig)
+                        .build())
+                    .build());
+            childLb.requestConnection();
+            final Subchannel subChannel =
+                helper.createSubchannel(CreateSubchannelArgs.newBuilder().build());
+            ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
+            childPolicyWrapper.setPicker(new SubchannelPicker() {
+              @Override
+              public PickResult pickSubchannel(PickSubchannelArgs args) {
+                UnmodifiableIterator<String> iter = rlsResponse.getHeaders().iterator();
+                while (iter.hasNext()) {
+                  String key = iter.next();
+                  String val = iter.next();
+                  args.getHeaders()
+                      .put(Metadata.Key.of(key, Metadata.ASCII_STRING_MARSHALLER), val);
+                }
+                return PickResult.withSubchannel(subChannel);
+              }
+            });
+            childPolicyWrapper.setPolicy(loadBalancingPolicy);
+            childPolicyWrapper.setConnectivityState(ConnectivityState.CONNECTING);
+            childPolicyWrapper.setHelper(childHelper);
+          } catch (InterruptedException e) {
+            e.printStackTrace();
+          } catch (ExecutionException e) {
+            // in the exception case, the cache will automatically remove the entry from cache to
+            // not serve failed event
+            // TODO in this exception, we should handle how to proceed. withError? noResult?
+            e.printStackTrace();
+          }
         }
       }
     }, MoreExecutors.directExecutor());
@@ -133,12 +194,25 @@ public class RlsPicker extends SubchannelPicker {
   }
 
   private Subchannel fallbackSubchannel;
+  private String fallbackAddress;
 
   /** Uses Subchannel connected to default target. */
   private PickResult useFallbackSubchannel() {
-    if (fallbackSubchannel == null) {
-      String target = lbPolicyConfiguration.getRouteLookupConfig().getDefaultTarget();
-      // TODO: create subchannel using target (also inherit credentials?)
+    String defaultTarget = lbPolicyConfiguration.getRouteLookupConfig().getDefaultTarget();
+    if (!defaultTarget.equals(fallbackAddress)) {
+      if (fallbackSubchannel != null) {
+        fallbackSubchannel.shutdown();
+      }
+      fallbackAddress = defaultTarget;
+      String[] addrs = defaultTarget.split(":", 2);
+      checkState(addrs.length == 2, "address expect to be host:port format");
+      String host = addrs[0];
+      int port = Integer.parseInt(addrs[1]);
+      InetSocketAddress targetSocketAddr = InetSocketAddress.createUnresolved(host, port);
+      fallbackSubchannel = helper.createSubchannel(
+          CreateSubchannelArgs.newBuilder()
+              .setAddresses(new EquivalentAddressGroup(targetSocketAddr))
+              .build());
     }
     return PickResult.withSubchannel(fallbackSubchannel);
   }
