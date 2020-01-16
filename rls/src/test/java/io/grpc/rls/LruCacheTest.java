@@ -28,8 +28,8 @@ import static org.mockito.Mockito.verify;
 
 import com.google.common.base.MoreObjects;
 import io.grpc.rls.AdaptiveThrottler.Ticker;
-import io.grpc.rls.LruCache.RemovalListener;
-import io.grpc.rls.LruCache.RemovalReason;
+import io.grpc.rls.LruCache.EvictionListener;
+import io.grpc.rls.LruCache.EvictionType;
 import java.util.Objects;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -56,14 +56,14 @@ public class LruCacheTest {
   private final Ticker ticker = fses.getFakeTicker();
 
   @Mock
-  private RemovalListener<Integer, Entry> removalListener;
+  private EvictionListener<Integer, Entry> evictionListener;
   private LruCache<Integer, Entry> cache;
 
   @Before
   public void setUp() {
     this.cache = new LruCache<Integer, Entry>(
         MAX_SIZE,
-        removalListener,
+        evictionListener,
         10,
         TimeUnit.MILLISECONDS,
         fses,
@@ -78,90 +78,90 @@ public class LruCacheTest {
   @Test
   public void eviction_size() {
     for (int i = 1; i <= MAX_SIZE; i++) {
-      cache.put(i, new Entry("Entry" + i, Long.MAX_VALUE));
+      cache.cache(i, new Entry("Entry" + i, Long.MAX_VALUE));
     }
-    cache.put(MAX_SIZE + 1, new Entry("should kick the first", Long.MAX_VALUE));
+    cache.cache(MAX_SIZE + 1, new Entry("should kick the first", Long.MAX_VALUE));
 
-    verify(removalListener).onRemoval(1, new Entry("Entry1", Long.MAX_VALUE), RemovalReason.SIZE);
-    assertThat(cache.size()).isEqualTo(MAX_SIZE);
+    verify(evictionListener).onEviction(1, new Entry("Entry1", Long.MAX_VALUE), EvictionType.SIZE);
+    assertThat(cache.estimatedSize()).isEqualTo(MAX_SIZE);
   }
 
   @Test
   public void size() {
     Entry entry1 = new Entry("Entry0", ticker.nowInMillis() + 10);
     Entry entry2 = new Entry("Entry1", ticker.nowInMillis() + 20);
-    cache.put(0, entry1);
-    cache.put(1, entry2);
-    assertThat(cache.size()).isEqualTo(2);
+    cache.cache(0, entry1);
+    cache.cache(1, entry2);
+    assertThat(cache.estimatedSize()).isEqualTo(2);
 
-    assertThat(cache.remove(0)).isEqualTo(entry1);
-    assertThat(cache.size()).isEqualTo(1);
+    assertThat(cache.invalidate(0)).isEqualTo(entry1);
+    assertThat(cache.estimatedSize()).isEqualTo(1);
 
-    assertThat(cache.remove(1)).isEqualTo(entry2);
-    assertThat(cache.size()).isEqualTo(0);
+    assertThat(cache.invalidate(1)).isEqualTo(entry2);
+    assertThat(cache.estimatedSize()).isEqualTo(0);
   }
 
   @Test
   public void eviction_expire() {
     Entry toBeEvicted = new Entry("Entry0", ticker.nowInMillis() + 10);
     Entry survivor = new Entry("Entry1", ticker.nowInMillis() + 20);
-    cache.put(0, toBeEvicted);
-    cache.put(1, survivor);
+    cache.cache(0, toBeEvicted);
+    cache.cache(1, survivor);
 
     fses.advance(10);
-    verify(removalListener).onRemoval(0, toBeEvicted, RemovalReason.EXPIRED);
+    verify(evictionListener).onEviction(0, toBeEvicted, EvictionType.EXPIRED);
 
     fses.advance(10);
-    verify(removalListener).onRemoval(1, survivor, RemovalReason.EXPIRED);
+    verify(evictionListener).onEviction(1, survivor, EvictionType.EXPIRED);
   }
 
   @Test
   public void eviction_explicit() {
     Entry toBeEvicted = new Entry("Entry0", ticker.nowInMillis() + 10);
     Entry survivor = new Entry("Entry1", ticker.nowInMillis() + 20);
-    cache.put(0, toBeEvicted);
-    cache.put(1, survivor);
+    cache.cache(0, toBeEvicted);
+    cache.cache(1, survivor);
 
-    assertThat(cache.remove(0)).isEqualTo(toBeEvicted);
+    assertThat(cache.invalidate(0)).isEqualTo(toBeEvicted);
 
-    verify(removalListener).onRemoval(0, toBeEvicted, RemovalReason.EXPLICIT);
+    verify(evictionListener).onEviction(0, toBeEvicted, EvictionType.EXPLICIT);
   }
 
   @Test
   public void eviction_replaced() {
     Entry toBeEvicted = new Entry("Entry0", ticker.nowInMillis() + 10);
     Entry survivor = new Entry("Entry1", ticker.nowInMillis() + 20);
-    cache.put(0, toBeEvicted);
-    cache.put(0, survivor);
+    cache.cache(0, toBeEvicted);
+    cache.cache(0, survivor);
 
-    verify(removalListener).onRemoval(0, toBeEvicted, RemovalReason.REPLACED);
+    verify(evictionListener).onEviction(0, toBeEvicted, EvictionType.REPLACED);
   }
 
   @Test
   public void eviction_size_shouldEvictAlreadyExpired() {
     for (int i = 1; i <= MAX_SIZE; i++) {
       // last two entries are <= current time (already expired)
-      cache.put(i, new Entry("Entry" + i, ticker.nowInMillis() + MAX_SIZE - i - 1));
+      cache.cache(i, new Entry("Entry" + i, ticker.nowInMillis() + MAX_SIZE - i - 1));
     }
-    cache.put(MAX_SIZE + 1, new Entry("should kick the first", Long.MAX_VALUE));
+    cache.cache(MAX_SIZE + 1, new Entry("should kick the first", Long.MAX_VALUE));
 
     // should remove MAX_SIZE-1 instead of MAX_SIZE because MAX_SIZE is accessed later
-    verify(removalListener)
-        .onRemoval(eq(MAX_SIZE - 1), any(Entry.class), eq(RemovalReason.EXPIRED));
-    assertThat(cache.size()).isEqualTo(MAX_SIZE);
+    verify(evictionListener)
+        .onEviction(eq(MAX_SIZE - 1), any(Entry.class), eq(EvictionType.EXPIRED));
+    assertThat(cache.estimatedSize()).isEqualTo(MAX_SIZE);
   }
 
   @Test
   public void eviction_get_shouldNotReturnAlreadyExpired() {
     for (int i = 1; i <= MAX_SIZE; i++) {
       // last entry is already expired when added
-      cache.put(i, new Entry("Entry" + i, ticker.nowInMillis() + MAX_SIZE - i));
+      cache.cache(i, new Entry("Entry" + i, ticker.nowInMillis() + MAX_SIZE - i));
     }
 
-    assertThat(cache.size()).isEqualTo(MAX_SIZE);
-    assertThat(cache.get(MAX_SIZE)).isNull();
-    assertThat(cache.size()).isEqualTo(MAX_SIZE - 1);
-    verify(removalListener).onRemoval(eq(MAX_SIZE), any(Entry.class), eq(RemovalReason.EXPIRED));
+    assertThat(cache.estimatedSize()).isEqualTo(MAX_SIZE);
+    assertThat(cache.read(MAX_SIZE)).isNull();
+    assertThat(cache.estimatedSize()).isEqualTo(MAX_SIZE - 1);
+    verify(evictionListener).onEviction(eq(MAX_SIZE), any(Entry.class), eq(EvictionType.EXPIRED));
   }
 
   private static class Entry {

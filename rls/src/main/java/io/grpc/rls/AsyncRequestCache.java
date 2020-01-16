@@ -19,13 +19,11 @@ package io.grpc.rls;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ListenableFuture;
 import io.grpc.LoadBalancer.Helper;
-import io.grpc.rls.AdaptiveThrottler.SystemTicker;
 import io.grpc.rls.AdaptiveThrottler.Ticker;
-import io.grpc.rls.LruCache.RemovalListener;
-import io.grpc.rls.LruCache.RemovalReason;
+import io.grpc.rls.LruCache.EvictionListener;
+import io.grpc.rls.LruCache.EvictionType;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -56,25 +54,8 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
   private final long callTimeoutMillis;
   private final int maxSize;
 
-  AsyncRequestCache(
-      ScheduledExecutorService ses,
-      Executor executor,
-      long maxAgeMillis,
-      long staleAgeMillis,
-      long maxCacheSize,
-      long callTimeoutMillis) {
-    this(
-        ses,
-        executor,
-        maxAgeMillis,
-        staleAgeMillis,
-        maxCacheSize,
-        callTimeoutMillis,
-        new SystemTicker(),
-        /* removalListener= */ null);
-  }
+  // TODO: possibly have a sorted map of expire entry to proactively cleanup.
 
-  @VisibleForTesting
   AsyncRequestCache(
       ScheduledExecutorService ses,
       Executor executor,
@@ -83,7 +64,7 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
       long maxCacheSize,
       long callTimeoutMillis,
       Ticker ticker,
-      RemovalListener<K, V> removalListener) {
+      EvictionListener<K, V> evictionListener) {
     this.executor = checkNotNull(executor, "executor");
     checkState(maxAgeMillis > 0, "maxAgeMillis should be positive");
     checkState(staleAgeMillis > 0, "staleAgeMillis should be positive");
@@ -98,7 +79,7 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
     this.maxSize = (int) maxCacheSize;
     this.lruCache =  new LruCache<K, CacheEntry>(
         maxSize,
-        new DelegatingRemovalListener(removalListener),
+        new DelegatingEvictionListener(evictionListener),
         1,
         TimeUnit.MINUTES,
         ses,
@@ -124,7 +105,7 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
   @CheckReturnValue
   public final synchronized V get(final K key, Helper helper) {
     final CacheEntry cacheEntry;
-    cacheEntry = lruCache.get(key);
+    cacheEntry = lruCache.read(key);
     if (cacheEntry == null) {
       return populateCache(key, helper).getValue();
     }
@@ -161,7 +142,7 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
           @Override
           public void run() {
             if (future.isCancelled()) {
-              lruCache.remove(key, RemovalReason.ERROR);
+              lruCache.invalidate(key, EvictionType.ERROR);
               return;
             }
 
@@ -180,7 +161,7 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
           }
         },
         executor);
-    lruCache.put(key, cacheEntry);
+    lruCache.cache(key, cacheEntry);
     return cacheEntry;
   }
 
@@ -268,17 +249,19 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
     }
   }
 
-  private final class DelegatingRemovalListener implements RemovalListener<K, CacheEntry> {
+  private final class DelegatingEvictionListener implements EvictionListener<K, CacheEntry> {
 
-    private final RemovalListener<K, V> delegate;
+    private final EvictionListener<K, V> delegate;
 
-    public DelegatingRemovalListener(RemovalListener<K, V> delegate) {
+    public DelegatingEvictionListener(@Nullable EvictionListener<K, V> delegate) {
       this.delegate = delegate;
     }
 
     @Override
-    public void onRemoval(K key, CacheEntry value, RemovalReason reason) {
-      delegate.onRemoval(key, value.getValue(), reason);
+    public void onEviction(K key, CacheEntry value, EvictionType cause) {
+      if (delegate != null) {
+        delegate.onEviction(key, value.getValue(), cause);
+      }
     }
   }
 }

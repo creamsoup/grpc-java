@@ -49,19 +49,20 @@ public abstract class LruCache<K, V> {
   private final LinkedHashMap<K, V> delegate;
   private final PeriodicCleaner periodicCleaner;
   private final Ticker ticker;
-  private final RemovalListener<K, V> removalListener;
+  private final EvictionListener<K, V> evictionListener;
   private final int maxSize;
 
   public LruCache(
       final int maxSize,
-      @Nullable final RemovalListener<K, V> removalListener,
+      @Nullable final EvictionListener<K, V> evictionListener,
       int cleaningInterval,
       TimeUnit cleaningIntervalUnit,
       ScheduledExecutorService ses,
       final Ticker ticker) {
     checkState(maxSize > 0, "max cache size should be positive");
     this.maxSize = maxSize;
-    this.removalListener = removalListener == null ? new EmptyRemovalListener() : removalListener;
+    this.evictionListener = evictionListener
+        == null ? new EmptyEvictionListener() : evictionListener;
     this.ticker = checkNotNull(ticker, "ticker");
     delegate = new LinkedHashMap<K, V>(maxSize, /* loadFactor= */ 0.75f, /* accessOrder= */ true) {
       @Override
@@ -71,13 +72,13 @@ public abstract class LruCache<K, V> {
         }
 
         // first, remove at most 1 expired entry
-        boolean removed = removeExpiredEntries(1, ticker.nowInMillis());
+        boolean removed = cleanupExpiredEntries(1, ticker.nowInMillis());
         // handles size based eviction if necessary
         boolean shouldRemove =
-            !removed && shouldRemoveEldestEntry(eldest.getKey(), eldest.getValue());
+            !removed && shouldInvalidateEldestEntry(eldest.getKey(), eldest.getValue());
         if (shouldRemove) {
           // remove entry by us to make sure lruIterator and cache is in sync
-          LruCache.this.remove(eldest.getKey(), RemovalReason.SIZE);
+          LruCache.this.invalidate(eldest.getKey(), EvictionType.SIZE);
         }
         return false;
       }
@@ -88,15 +89,15 @@ public abstract class LruCache<K, V> {
     periodicCleaner = new PeriodicCleaner(ses, cleaningInterval, cleaningIntervalUnit).start();
   }
 
-  /** Puts a cache entry. If the key already exists, it will replace the entry. */
+  /** Populates a cache entry. If the key already exists, it will replace the entry. */
   @Nullable
-  public final V put(K key, V value) {
+  public final V cache(K key, V value) {
     checkNotNull(key, "key");
     checkNotNull(value, "value");
     synchronized (lock) {
       V existing = delegate.put(key, value);
       if (existing != null) {
-        removalListener.onRemoval(key, existing, RemovalReason.REPLACED);
+        evictionListener.onEviction(key, existing, EvictionType.REPLACED);
       }
       return existing;
     }
@@ -108,12 +109,12 @@ public abstract class LruCache<K, V> {
    */
   @Nullable
   @CheckReturnValue
-  public final V get(K key) {
+  public final V read(K key) {
     checkNotNull(key, "key");
     synchronized (lock) {
       V existing = delegate.get(key);
       if (existing != null && isExpired(key, existing, ticker.nowInMillis())) {
-        remove(key, RemovalReason.EXPIRED);
+        invalidate(key, EvictionType.EXPIRED);
         return null;
       }
       return existing;
@@ -122,50 +123,50 @@ public abstract class LruCache<K, V> {
 
   /**
    * Invalidates an entry for given key if exists. This operation will trigger {@link
-   * RemovalListener} with {@link RemovalReason#EXPLICIT}.
+   * EvictionListener} with {@link EvictionType#EXPLICIT}.
    */
   @Nullable
-  public final V remove(K key) {
-    return remove(key, RemovalReason.EXPLICIT);
+  public final V invalidate(K key) {
+    return invalidate(key, EvictionType.EXPLICIT);
   }
 
   /**
    * Invalidates an entry for given key if exists. This operation will trigger {@link
-   * RemovalListener} with given reason.
+   * EvictionListener} with given cause.
    */
   @Nullable
-  public final V remove(K key, RemovalReason reason) {
+  public final V invalidate(K key, EvictionType cause) {
     checkNotNull(key, "key");
-    checkNotNull(reason, "reason");
+    checkNotNull(cause, "cause");
     synchronized (lock) {
       V existing = delegate.remove(key);
       if (existing != null) {
-        removalListener.onRemoval(key, existing, reason);
+        evictionListener.onEviction(key, existing, cause);
       }
       return existing;
     }
   }
 
   /**
-   * Invalidates cache entries for given keys. This operation will trigger {@link RemovalListener}
-   * with {@link RemovalReason#EXPLICIT}.
+   * Invalidates cache entries for given keys. This operation will trigger {@link EvictionListener}
+   * with {@link EvictionType#EXPLICIT}.
    */
-  public final void removeAll(Iterable<K> keys) {
-    removeAll(keys, RemovalReason.EXPLICIT);
+  public final void invalidateAll(Iterable<K> keys) {
+    invalidateAll(keys, EvictionType.EXPLICIT);
   }
 
   /**
-   * Invalidates cache entries for given keys. This operation will trigger {@link RemovalListener}
-   * with given reason.
+   * Invalidates cache entries for given keys. This operation will trigger {@link EvictionListener}
+   * with given cause.
    */
-  public final void removeAll(Iterable<K> keys, RemovalReason reason) {
+  public final void invalidateAll(Iterable<K> keys, EvictionType cause) {
     checkNotNull(keys, "keys");
-    checkNotNull(reason, "reason");
+    checkNotNull(cause, "cause");
     synchronized (lock) {
       for (K key : keys) {
         V existing = delegate.remove(key);
         if (existing != null) {
-          removalListener.onRemoval(key, existing, reason);
+          evictionListener.onEviction(key, existing, cause);
         }
       }
     }
@@ -173,9 +174,9 @@ public abstract class LruCache<K, V> {
 
   /** Returns {@code true} if given key is cached. */
   @CheckReturnValue
-  public final boolean containsKey(K key) {
+  public final boolean hasCacheEntry(K key) {
     // call get to handle expired
-    return get(key) != null;
+    return read(key) != null;
   }
 
   /**
@@ -183,17 +184,17 @@ public abstract class LruCache<K, V> {
    * might be already expired cache.
    */
   @CheckReturnValue
-  public final int size() {
+  public final int estimatedSize() {
     synchronized (lock) {
       return delegate.size();
     }
   }
 
-  private boolean removeExpiredEntries(long now) {
-    return removeExpiredEntries(0, now);
+  private boolean cleanupExpiredEntries(long now) {
+    return cleanupExpiredEntries(0, now);
   }
 
-  private boolean removeExpiredEntries(int limit, long now) {
+  private boolean cleanupExpiredEntries(int limit, long now) {
     if (limit == 0) {
       limit = maxSize;
     }
@@ -204,7 +205,7 @@ public abstract class LruCache<K, V> {
         Map.Entry<K, V> entry = lruIter.next();
         if (isExpired(entry.getKey(), entry.getValue(), now)) {
           lruIter.remove();
-          removalListener.onRemoval(entry.getKey(), entry.getValue(), RemovalReason.EXPIRED);
+          evictionListener.onEviction(entry.getKey(), entry.getValue(), EvictionType.EXPIRED);
           removedAny = true;
           limit--;
         }
@@ -217,7 +218,7 @@ public abstract class LruCache<K, V> {
    * Determines if the eldest entry should be kept or not when the cache size limit is reached. Note
    * that LruCache is access level and the eldest is determined by access pattern.
    */
-  protected boolean shouldRemoveEldestEntry(K eldestKey, V eldestValue) {
+  protected boolean shouldInvalidateEldestEntry(K eldestKey, V eldestValue) {
     return true;
   }
 
@@ -261,28 +262,28 @@ public abstract class LruCache<K, V> {
 
     @Override
     public void run() {
-      removeExpiredEntries(ticker.nowInMillis());
+      cleanupExpiredEntries(ticker.nowInMillis());
     }
   }
 
-  /** A listener to notify when a cache entry is removed / evicted. */
-  public interface RemovalListener<K, V> {
+  /** A listener to notify when a cache entry is evicted. */
+  public interface EvictionListener<K, V> {
 
-    /** Notifies the listener when any cache entry is removed. */
-    void onRemoval(K key, V value, RemovalReason reason);
+    /** Notifies the listener when any cache entry is evicted. */
+    void onEviction(K key, V value, EvictionType cause);
   }
 
-  /** A {@link RemovalListener} doesn't do anything. */
-  private final class EmptyRemovalListener implements RemovalListener<K, V> {
+  /** A {@link EvictionListener} doesn't do anything. */
+  private final class EmptyEvictionListener implements EvictionListener<K, V> {
 
     @Override
-    public void onRemoval(K key, V value, RemovalReason reason) {
+    public void onEviction(K key, V value, EvictionType cause) {
       // no-op
     }
   }
 
-  /** A RemovalReason indicates the eviction reason of the cache entry from {@link LruCache}. */
-  public enum RemovalReason {
+  /** An EvictionType indicates the cause of eviction from {@link LruCache}. */
+  public enum EvictionType {
     /** Explicitly removed by user. */
     EXPLICIT,
     /** Evicted due to size limit. */
