@@ -58,7 +58,7 @@ public final class RlsRequestFactory {
           table.put(
               path,
               rlsRequestHeaderName,
-              new NameMatcher(requestHeaders));
+              new NameMatcher(requestHeaders, /* optional= */ true));
         }
       }
     }

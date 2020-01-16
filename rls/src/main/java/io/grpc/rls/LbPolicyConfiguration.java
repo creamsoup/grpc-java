@@ -53,7 +53,6 @@ final class LbPolicyConfiguration {
     return routeLookupConfig;
   }
 
-
   public LoadBalancingPolicy getLoadBalancingPolicy() {
     return policy;
   }
@@ -165,6 +164,9 @@ final class LbPolicyConfiguration {
 
     public LoadBalancingPolicy(
         String childPolicyConfigTargetFieldName, List<Map<String, ?>> childPolicies) {
+      checkState(
+          childPolicyConfigTargetFieldName != null && !childPolicyConfigTargetFieldName.isEmpty(),
+          "childPolicyConfigTargetFieldName cannot be empty or null");
       this.childPolicyConfigTargetFieldName = childPolicyConfigTargetFieldName;
       Map<String, ?> effectiveChildPolicy = null;
       LoadBalancerProvider effectiveLbProvider = null;
@@ -184,7 +186,8 @@ final class LbPolicyConfiguration {
         }
         policyTried.add(policyName);
       }
-      checkState(effectiveChildPolicy != null && effectiveLbProvider != null,
+      checkState(
+          effectiveChildPolicy != null,
           "no valid childPolicy found, policy tried: %s", policyTried);
       this.effectiveChildPolicy = effectiveChildPolicy;
       this.effectiveLbProvider = effectiveLbProvider;

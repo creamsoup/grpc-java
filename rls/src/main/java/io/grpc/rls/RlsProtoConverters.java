@@ -17,6 +17,7 @@
 package io.grpc.rls;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.Converter;
 import io.grpc.internal.JsonUtil;
@@ -29,10 +30,13 @@ import io.grpc.rls.RlsProtoData.NameMatcher;
 import io.grpc.rls.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 /**
  * A RlsProtoConverters is a collection of {@link Converter} between RouteLookupService proto
@@ -130,10 +134,18 @@ final class RlsProtoConverters {
       List<GrpcKeyBuilder> grpcKeyBuilders =
           GrpcKeyBuilderConverter
               .covertAll(JsonUtil.checkObjectList(JsonUtil.getList(json, "grpcKeyBuilders")));
+      checkState(!grpcKeyBuilders.isEmpty(), "At least one GrpcKeyBuilders are expected");
+      checkUniqueName(grpcKeyBuilders);
       String lookupService = JsonUtil.getString(json, "lookupService");
-      long timeout = JsonUtil.getDouble(json, "lookupServiceTimeout").longValue();
-      long maxAge = JsonUtil.getDouble(json, "maxAge").longValue();
-      long staleAge = JsonUtil.getDouble(json, "staleAge").longValue();
+      long timeout =
+          TimeUnit.SECONDS.toMillis(
+              JsonUtil.getDouble(json, "lookupServiceTimeout").longValue());
+      long maxAge =
+          TimeUnit.SECONDS.toMillis(
+              JsonUtil.getDouble(json, "maxAge").longValue());
+      long staleAge =
+          TimeUnit.SECONDS.toMillis(
+              JsonUtil.getDouble(json, "staleAge").longValue());
       long cacheSize = JsonUtil.getDouble(json, "cacheSize").longValue();
       String defaultTarget = JsonUtil.getString(json, "defaultTarget");
       RequestProcessingStrategy strategy =
@@ -150,9 +162,20 @@ final class RlsProtoConverters {
           strategy);
     }
 
+    private void checkUniqueName(List<GrpcKeyBuilder> grpcKeyBuilders) {
+      Set<Name> names = new HashSet<>();
+      for (GrpcKeyBuilder grpcKeyBuilder : grpcKeyBuilders) {
+        int prevSize = names.size();
+        names.addAll(grpcKeyBuilder.getNames());
+        if (names.size() != prevSize + grpcKeyBuilder.getNames().size()) {
+          throw new IllegalStateException("Names in the GrpcKeyBuilders should be unique");
+        }
+      }
+    }
+
     @Override
     protected Map<String, Object> doBackward(RouteLookupConfig routeLookupConfig) {
-      return null;
+      throw new UnsupportedOperationException();
     }
   }
 
@@ -176,9 +199,18 @@ final class RlsProtoConverters {
                 JsonUtil.getString(rawName, "service"), JsonUtil.getString(rawName, "method")));
       }
       Map<String, ?> rawHeaders = JsonUtil.getObject(keyBuilder, "headers");
-      Map<String, NameMatcher> nameMatcherMap = new HashMap<>();
+      Map<String, NameMatcher> nameMatcherMap = new LinkedHashMap<>();
       for (Map.Entry<String, ?> rawHeader : rawHeaders.entrySet()) {
-        NameMatcher matcher = new NameMatcher((List<String>) rawHeader.getValue());
+        checkArgument(
+            rawHeader.getValue() instanceof Map,
+            "expect object type for header %s", rawHeader.getKey());
+        Map<String, ?> headerValue = (Map<String, ?>) rawHeader.getValue();
+        NameMatcher matcher =
+            new NameMatcher(
+                (List<String>) headerValue.get("names"),
+                (Boolean) headerValue.get("optional"));
+        checkArgument(
+            matcher.isOptional(), "NameMatcher for GrpcKeyBuilders shouldn't be required");
         nameMatcherMap.put(rawHeader.getKey(), matcher);
       }
       return new GrpcKeyBuilder(names, nameMatcherMap);

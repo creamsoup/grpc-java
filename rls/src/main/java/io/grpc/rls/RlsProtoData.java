@@ -18,6 +18,7 @@ package io.grpc.rls;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
@@ -25,6 +26,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import javax.annotation.concurrent.Immutable;
 
 /** RlsProtoData is a collection of internal representation of RouteLookupService proto messages. */
@@ -171,6 +173,8 @@ public final class RlsProtoData {
   @Immutable
   public static final class RouteLookupConfig {
 
+    public static final long MAX_AGE_MILLIS = TimeUnit.MINUTES.toMillis(5);
+
     /**
      * Unordered specifications for constructing keys for gRPC requests.  All GrpcKeyBuilders on
      * this list must have unique "name" fields so that the client is free to prebuild a hash map
@@ -231,14 +235,24 @@ public final class RlsProtoData {
         long cacheSize,
         String defaultTarget,
         RequestProcessingStrategy requestProcessingStrategy) {
-      this.grpcKeyBuilders = ImmutableList.copyOf(checkNotNull(grpcKeyBuilders, "grpcKeyBuilders"));
+      checkState(
+          !checkNotNull(grpcKeyBuilders, "grpcKeyBuilders").isEmpty(),
+          "must have at least one GrpcKeyBuilder");
+      this.grpcKeyBuilders = ImmutableList.copyOf(grpcKeyBuilders);
       this.lookupService = lookupService;
       this.lookupServiceTimeoutInMillis = lookupServiceTimeoutInMillis;
-      this.maxAgeInMillis = maxAgeInMillis;
-      this.staleAgeInMillis = staleAgeInMillis;
+      this.maxAgeInMillis = Math.min(maxAgeInMillis, MAX_AGE_MILLIS);
+      this.staleAgeInMillis = Math.min(staleAgeInMillis, this.maxAgeInMillis);
       this.cacheSize = cacheSize;
       this.defaultTarget = defaultTarget;
       this.requestProcessingStrategy = requestProcessingStrategy;
+      checkState(
+          (requestProcessingStrategy == RequestProcessingStrategy.SYNC_LOOKUP_CLIENT_SEES_ERROR
+              || requestProcessingStrategy
+              == RequestProcessingStrategy.ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS)
+              && !defaultTarget.isEmpty(),
+          "defaultTarget cannot be empty if strategy is %s",
+          requestProcessingStrategy);
     }
 
     public ImmutableList<GrpcKeyBuilder> getGrpcKeyBuilders() {
@@ -354,10 +368,15 @@ public final class RlsProtoData {
      * If true, make this extraction optional. A key builder will still match if no value is found.
      * Note for gRPC keyBuilder it is treated as {@code true}.
      */
-    private final boolean optional = true;
+    private final boolean optional;
 
     NameMatcher(List<String> names) {
-      this.names = ImmutableList.copyOf(names);
+      this(names, /* optional= */ true);
+    }
+
+    NameMatcher(List<String> names, boolean optional) {
+      this.names = ImmutableList.copyOf(checkNotNull(names, "names"));
+      this.optional = optional;
     }
 
     public ImmutableList<String> names() {
@@ -456,7 +475,10 @@ public final class RlsProtoData {
     }
 
     public Name(String service, String method) {
-      this.service = checkNotNull(service, "service");
+      checkState(
+          !checkNotNull(service, "service").isEmpty(),
+          "service must not be empty or null");
+      this.service = service;
       this.method = method;
     }
 

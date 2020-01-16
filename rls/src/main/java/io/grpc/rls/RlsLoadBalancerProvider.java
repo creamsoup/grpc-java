@@ -144,7 +144,7 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
       // TODO removeme and test with default service config
       rawLoadBalancingConfigPolicy = (Map<String, ?>) JsonParser.parse(TEST_RLS_CONFIG);
     } catch (IOException ex) {
-      ex.printStackTrace();
+      throw new RuntimeException(ex);
     }
 
     try {
@@ -154,7 +154,6 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
           JsonUtil.getString(rawLoadBalancingConfigPolicy, "childPolicyConfigTargetFieldName"),
           JsonUtil.checkObjectList(
               checkNotNull(JsonUtil.getList(rawLoadBalancingConfigPolicy, "childPolicy"))));
-
       return ConfigOrError.fromConfig(new LbPolicyConfiguration(routeLookupConfig, lbPolicy));
     } catch (Exception e) {
       return ConfigOrError.fromError(

@@ -110,7 +110,6 @@ public class RlsProtoConvertersTest {
   }
 
   @Test
-  @Ignore("not implemented yet, impl if required.")
   public void convert_jsonRlsConfig() throws IOException {
     String jsonStr = "{\n"
         + "  \"grpcKeyBuilders\": [\n"
@@ -127,7 +126,7 @@ public class RlsProtoConvertersTest {
         + "            \"User\",\n"
         + "            \"Parent\"\n"
         + "          ],\n"
-        + "          \"optional\": false\n"
+        + "          \"optional\": true\n"
         + "        },\n"
         + "        \"id\": {\n"
         + "          \"names\": [\n"
@@ -150,7 +149,7 @@ public class RlsProtoConvertersTest {
         + "            \"User\",\n"
         + "            \"Parent\"\n"
         + "          ],\n"
-        + "          \"optional\": false\n"
+        + "          \"optional\": true\n"
         + "        },\n"
         + "        \"password\": {\n"
         + "          \"names\": [\n"
@@ -173,7 +172,7 @@ public class RlsProtoConvertersTest {
         + "            \"User\",\n"
         + "            \"Parent\"\n"
         + "          ],\n"
-        + "          \"optional\": false\n"
+        + "          \"optional\": true\n"
         + "        }\n"
         + "      }\n"
         + "    }\n"
