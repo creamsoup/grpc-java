@@ -217,6 +217,7 @@ public class RlsProtoConvertersTest {
             RequestProcessingStrategy.ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS);
 
     RouteLookupConfigConverter converter = new RouteLookupConfigConverter();
+    @SuppressWarnings("unchecked")
     Map<String, ?> parsedJson = (Map<String, ?>) JsonParser.parse(jsonStr);
     System.out.println("parsedJson: " + parsedJson);
     RouteLookupConfig converted = converter.convert(parsedJson);

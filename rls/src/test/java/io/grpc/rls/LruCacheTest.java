@@ -16,6 +16,7 @@
 
 package io.grpc.rls;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.truth.Truth.assertThat;
 import static io.opencensus.internal.Utils.checkNotNull;
@@ -24,14 +25,12 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.mockito.internal.verification.VerificationModeFactory.times;
 
 import com.google.common.base.MoreObjects;
-import com.google.common.base.Objects;
 import io.grpc.rls.AdaptiveThrottler.Ticker;
 import io.grpc.rls.LruCache.RemovalListener;
 import io.grpc.rls.LruCache.RemovalReason;
+import java.util.Objects;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -61,8 +60,7 @@ public class LruCacheTest {
   private LruCache<Integer, Entry> cache;
 
   @Before
-  public void setUp() throws Exception {
-
+  public void setUp() {
     this.cache = new LruCache<Integer, Entry>(
         MAX_SIZE,
         removalListener,
@@ -142,28 +140,44 @@ public class LruCacheTest {
   @Test
   public void eviction_size_shouldEvictAlreadyExpired() {
     for (int i = 1; i <= MAX_SIZE; i++) {
-      cache.put(i, new Entry("Entry" + i, ticker.nowInMillis() + MAX_SIZE - i));
+      // last two entries are <= current time (already expired)
+      cache.put(i, new Entry("Entry" + i, ticker.nowInMillis() + MAX_SIZE - i - 1));
     }
     cache.put(MAX_SIZE + 1, new Entry("should kick the first", Long.MAX_VALUE));
 
-    verify(removalListener).onRemoval(eq(MAX_SIZE), any(Entry.class), eq(RemovalReason.EXPIRED));
+    // should remove MAX_SIZE-1 instead of MAX_SIZE because MAX_SIZE is accessed later
+    verify(removalListener)
+        .onRemoval(eq(MAX_SIZE - 1), any(Entry.class), eq(RemovalReason.EXPIRED));
     assertThat(cache.size()).isEqualTo(MAX_SIZE);
+  }
+
+  @Test
+  public void eviction_get_shouldNotReturnAlreadyExpired() {
+    for (int i = 1; i <= MAX_SIZE; i++) {
+      // last entry is already expired when added
+      cache.put(i, new Entry("Entry" + i, ticker.nowInMillis() + MAX_SIZE - i));
+    }
+
+    assertThat(cache.size()).isEqualTo(MAX_SIZE);
+    assertThat(cache.get(MAX_SIZE)).isNull();
+    assertThat(cache.size()).isEqualTo(MAX_SIZE - 1);
+    verify(removalListener).onRemoval(eq(MAX_SIZE), any(Entry.class), eq(RemovalReason.EXPIRED));
   }
 
   private static class Entry {
     private String value;
     private long expireTime;
 
-    public Entry(String value, long expireTime) {
+    Entry(String value, long expireTime) {
       this.value = value;
       this.expireTime = expireTime;
     }
 
-    public String getValue() {
+    String getValue() {
       return value;
     }
 
-    public long getExpireTime() {
+    long getExpireTime() {
       return expireTime;
     }
 
@@ -176,12 +190,13 @@ public class LruCacheTest {
         return false;
       }
       Entry entry = (Entry) o;
-      return expireTime == entry.expireTime && Objects.equal(value, entry.value);
+      return expireTime == entry.expireTime &&
+          Objects.equals(value, entry.value);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hashCode(value, expireTime);
+      return Objects.hash(value, expireTime);
     }
 
     @Override
@@ -194,8 +209,7 @@ public class LruCacheTest {
   }
 
   // A fake ScheduledExecutorService only can handle one scheduledAtFixedRate with a lot of
-  // limitation. Only intended to be used in this test.
-  // NOTE: Intended to use with mock to call real methods.
+  // limitation / assumptions. Only intended to be used in this test with mock (CALL_REAL_METHODS).
   private static abstract class FakeScheduledService implements ScheduledExecutorService {
 
     private long currTimeInMillis;
@@ -206,17 +220,18 @@ public class LruCacheTest {
     @Override
     public ScheduledFuture<?> scheduleAtFixedRate(
         Runnable command, long initialDelay, long period, TimeUnit unit) {
+      // hack to initialize
       if (this.command == null) {
         this.command = new AtomicReference<>();
       }
       checkState(this.command.get() == null, "only can schedule one");
       checkState(period > 0, "period should be positive");
       checkState(initialDelay >= 0, "initial delay should be >= 0");
-      this.command.set(checkNotNull(command, "command"));
       if (initialDelay == 0) {
         initialDelay = period;
         command.run();
       }
+      this.command.set(checkNotNull(command, "command"));
       this.nextRun = checkNotNull(unit, "unit").toMillis(initialDelay) + currTimeInMillis;
       this.period = unit.toMillis(period);
       return mock(ScheduledFuture.class);
@@ -227,11 +242,21 @@ public class LruCacheTest {
     }
 
     void advance(long millis) {
-      currTimeInMillis += millis;
-      Runnable cmd = command.get();
-      if (cmd != null && currTimeInMillis >= nextRun) {
-        nextRun += period;
-        cmd.run();
+      // if scheduled command, only can advance the ticker to trigger at most 1 event
+      boolean scheduled = command != null && command.get() != null;
+      if (scheduled) {
+        checkArgument(
+            (currTimeInMillis + millis) < (nextRun + 2 * period),
+            "Cannot advance ticker because more than one repeated tasks will run");
+        long finalTime = currTimeInMillis + millis;
+        if (finalTime >= nextRun) {
+          nextRun += period;
+          currTimeInMillis = nextRun;
+          command.get().run();
+        }
+        currTimeInMillis = finalTime;
+      } else {
+        currTimeInMillis += millis;
       }
     }
 

@@ -140,9 +140,8 @@ public abstract class LruCache<K, V> {
 
   @CheckReturnValue
   public final boolean containsKey(K key) {
-    synchronized (lock) {
-      return delegate.containsKey(key);
-    }
+    // call get to handle expired
+    return get(key) != null;
   }
 
   @CheckReturnValue
