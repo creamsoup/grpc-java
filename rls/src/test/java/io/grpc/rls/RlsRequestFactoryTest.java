@@ -108,7 +108,7 @@ public class RlsRequestFactoryTest {
     metadata.put(Metadata.Key.of("X-Google-Id", Metadata.ASCII_STRING_MARSHALLER), "123");
     metadata.put(Metadata.Key.of("foo", Metadata.ASCII_STRING_MARSHALLER), "bar");
 
-    RouteLookupRequest request = factory.create("https://foo.com/service1/create", metadata);
+    RouteLookupRequest request = factory.create("foo.com", "/service1/create", metadata);
 
     assertThat(request.getTargetType()).isEqualTo("grpc");
     assertThat(request.getPath()).isEqualTo("service1/create");
@@ -124,7 +124,7 @@ public class RlsRequestFactoryTest {
     metadata.put(Metadata.Key.of("foo", Metadata.ASCII_STRING_MARSHALLER), "bar");
 
     try {
-      RouteLookupRequest unused = factory.create("https://foo.com/service1/create", metadata);
+      RouteLookupRequest unused = factory.create("foo.com", "/service1/create", metadata);
       fail();
     } catch (IllegalStateException e) {
       assertThat(e).hasMessageThat().startsWith("Required header not found:");
@@ -139,7 +139,7 @@ public class RlsRequestFactoryTest {
     metadata.put(Metadata.Key.of("Password", Metadata.ASCII_STRING_MARSHALLER), "hunter2");
     metadata.put(Metadata.Key.of("foo", Metadata.ASCII_STRING_MARSHALLER), "bar");
 
-    RouteLookupRequest request = factory.create("https://foo.com/service1/update", metadata);
+    RouteLookupRequest request = factory.create("foo.com", "/service1/update", metadata);
 
     assertThat(request.getTargetType()).isEqualTo("grpc");
     assertThat(request.getPath()).isEqualTo("service1/update");
@@ -154,7 +154,7 @@ public class RlsRequestFactoryTest {
     metadata.put(Metadata.Key.of("X-Google-Id", Metadata.ASCII_STRING_MARSHALLER), "123");
     metadata.put(Metadata.Key.of("foo", Metadata.ASCII_STRING_MARSHALLER), "bar");
 
-    RouteLookupRequest request = factory.create("https://foo.com/service1/update", metadata);
+    RouteLookupRequest request = factory.create("foo.com", "/service1/update", metadata);
 
     assertThat(request.getTargetType()).isEqualTo("grpc");
     assertThat(request.getPath()).isEqualTo("service1/update");
@@ -169,7 +169,7 @@ public class RlsRequestFactoryTest {
     metadata.put(Metadata.Key.of("X-Google-Id", Metadata.ASCII_STRING_MARSHALLER), "123");
     metadata.put(Metadata.Key.of("foo", Metadata.ASCII_STRING_MARSHALLER), "bar");
 
-    RouteLookupRequest request = factory.create("https://foo.com/service999/update", metadata);
+    RouteLookupRequest request = factory.create("foo.com", "/service999/update", metadata);
 
     assertThat(request.getTargetType()).isEqualTo("grpc");
     assertThat(request.getPath()).isEqualTo("service999/update");
@@ -184,7 +184,7 @@ public class RlsRequestFactoryTest {
     metadata.put(Metadata.Key.of("X-Google-Id", Metadata.ASCII_STRING_MARSHALLER), "123");
     metadata.put(Metadata.Key.of("foo", Metadata.ASCII_STRING_MARSHALLER), "bar");
 
-    RouteLookupRequest request = factory.create("https://foo.com/service3/update", metadata);
+    RouteLookupRequest request = factory.create("foo.com", "/service3/update", metadata);
 
     assertThat(request.getTargetType()).isEqualTo("grpc");
     assertThat(request.getPath()).isEqualTo("service3/update");

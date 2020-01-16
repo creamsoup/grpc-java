@@ -65,7 +65,7 @@ public class AsyncRequestCacheConcurrencyTest {
       return System.currentTimeMillis() - start;
     }
   };
-  private final AsyncRequestCache3<String, String> cache = new TestAsyncRlsCache();
+  private final ConcurrentAsyncRequestCache<String, String> cache = new TestConcurrentAsyncRlsCache();
   // reasonable larger than cache size to test eviction case as well.
   private final Range<Integer> keyRange = Range.closedOpen(0, (int) (CACHE_SIZE * 1.2));
 
@@ -170,11 +170,12 @@ public class AsyncRequestCacheConcurrencyTest {
       new ConcurrentHashMap<>();
 
 
-  private final class TestAsyncRlsCache extends AsyncRequestCache3<String, String> {
+  private final class TestConcurrentAsyncRlsCache extends
+      ConcurrentAsyncRequestCache<String, String> {
 
     private final AtomicLong version = new AtomicLong();
 
-    TestAsyncRlsCache() {
+    TestConcurrentAsyncRlsCache() {
       super(
           AsyncRequestCacheConcurrencyTest.this.ses,
           EXPIRE_MILLIS,

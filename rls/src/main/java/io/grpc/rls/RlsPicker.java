@@ -21,9 +21,9 @@ import static com.google.common.base.Preconditions.checkState;
 import static io.grpc.LoadBalancer.ATTR_LOAD_BALANCING_CONFIG;
 
 import com.google.common.collect.UnmodifiableIterator;
-import com.google.common.util.concurrent.MoreExecutors;
 import io.grpc.Attributes;
 import io.grpc.ConnectivityState;
+import io.grpc.ConnectivityStateInfo;
 import io.grpc.EquivalentAddressGroup;
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.CreateSubchannelArgs;
@@ -33,6 +33,7 @@ import io.grpc.LoadBalancer.PickSubchannelArgs;
 import io.grpc.LoadBalancer.ResolvedAddresses;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
+import io.grpc.LoadBalancer.SubchannelStateListener;
 import io.grpc.Metadata;
 import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
@@ -50,12 +51,16 @@ import java.util.concurrent.ExecutionException;
 public class RlsPicker extends SubchannelPicker {
 
   private LbPolicyConfiguration lbPolicyConfiguration;
-  private RouteLookupClientImpl rlsClient;
+  private RouteLookupClientImpl rlsClient; // cache is embedded
+  private RlsRequestFactory requestFactory; // aka keyBuilderMap
+  // not specified in the design doc.
   private Helper helper;
-  private RlsRequestFactory requestFactory;
   private RequestProcessingStrategy strategy;
   private State state = State.OKAY;
   private Status error = null;
+
+
+  // TODO manage connectivity status
 
   public RlsPicker(
       LbPolicyConfiguration lbPolicyConfiguration, RouteLookupClientImpl client, Helper helper) {
@@ -137,7 +142,7 @@ public class RlsPicker extends SubchannelPicker {
             childLb.requestConnection();
             final Subchannel subChannel =
                 helper.createSubchannel(CreateSubchannelArgs.newBuilder().build());
-            ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
+            final ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper().acquire();
             childPolicyWrapper.setPicker(new SubchannelPicker() {
               @Override
               public PickResult pickSubchannel(PickSubchannelArgs args) {
@@ -151,9 +156,22 @@ public class RlsPicker extends SubchannelPicker {
                 return PickResult.withSubchannel(subChannel);
               }
             });
-            childPolicyWrapper.setPolicy(loadBalancingPolicy);
+
+            subChannel.start(new SubchannelStateListener() {
+              @Override
+              public void onSubchannelState(ConnectivityStateInfo newState) {
+                childPolicyWrapper.setConnectivityState(newState.getState());
+                if (newState.getState() == ConnectivityState.TRANSIENT_FAILURE
+                    || newState.getState() == ConnectivityState.SHUTDOWN) {
+                  // handle subchannel shutdown
+                  childPolicyWrapper.release();
+                }
+              }
+            });
+            subChannel.requestConnection();
+
+            childPolicyWrapper.setChildPolicy(loadBalancingPolicy);
             childPolicyWrapper.setConnectivityState(ConnectivityState.CONNECTING);
-            childPolicyWrapper.setHelper(childHelper);
           } catch (InterruptedException e) {
             e.printStackTrace();
           } catch (ExecutionException e) {
@@ -164,7 +182,7 @@ public class RlsPicker extends SubchannelPicker {
           }
         }
       }
-    }, MoreExecutors.directExecutor());
+    }, helper.getSynchronizationContext());
     switch (strategy) {
       case SYNC_LOOKUP_CLIENT_SEES_ERROR:
         // fall-through

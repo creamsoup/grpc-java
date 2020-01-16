@@ -24,6 +24,7 @@ import com.google.common.cache.RemovalCause;
 import com.google.common.cache.RemovalListener;
 import com.google.common.cache.RemovalNotification;
 import com.google.common.util.concurrent.ListenableFuture;
+import io.grpc.ExperimentalApi;
 import io.grpc.rls.AdaptiveThrottler.Ticker;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -31,8 +32,11 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.annotation.CheckReturnValue;
+import javax.annotation.concurrent.ThreadSafe;
 
-abstract class AsyncRequestCache3<K, V> {
+@ThreadSafe
+@ExperimentalApi("not functional yet")
+abstract class ConcurrentAsyncRequestCache<K, V> {
   private final int maxSize;
   private final int concurrencyLevel;
   // this will be active segment's TTL
@@ -52,7 +56,7 @@ abstract class AsyncRequestCache3<K, V> {
   private final ConcurrentLinkedQueue<Recency<K>> recencyQueue = new ConcurrentLinkedQueue<>();
 
   @SuppressWarnings({"unchecked", "rawtypes"})
-  AsyncRequestCache3(
+  ConcurrentAsyncRequestCache(
       Executor executor,
       long maxAgeMillis,
       long staleAgeMillis,

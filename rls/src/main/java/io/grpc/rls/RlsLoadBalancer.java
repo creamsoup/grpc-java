@@ -24,14 +24,9 @@ import io.grpc.EquivalentAddressGroup;
 import io.grpc.ExperimentalApi;
 import io.grpc.LoadBalancer;
 import io.grpc.ManagedChannel;
-import io.grpc.NameResolver;
 import io.grpc.NameResolver.ConfigOrError;
-import io.grpc.NameResolver.Listener2;
-import io.grpc.NameResolver.ResolutionResult;
 import io.grpc.Status;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.List;
 
 @ExperimentalApi("TODO")
@@ -87,6 +82,7 @@ class RlsLoadBalancer extends LoadBalancer {
             .setMaxCacheSize(rlsConfig.getCacheSize())
             .setMaxAgeMillis(rlsConfig.getMaxAgeInMillis())
             .setStaleAgeMillis(rlsConfig.getStaleAgeInMillis())
+            .setExecutor(helper.getSynchronizationContext())
             .build();
     routeLookupClient.shutdown();
     routeLookupClient = client;
@@ -119,9 +115,6 @@ class RlsLoadBalancer extends LoadBalancer {
     }
     if (routeLookupClient != null) {
       routeLookupClient.shutdown();
-    }
-    if (lbPolicyConfiguration != null) {
-      lbPolicyConfiguration.cleanup();
     }
   }
 }

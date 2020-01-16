@@ -16,24 +16,24 @@
 
 package io.grpc.rls;
 
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import io.grpc.ConnectivityState;
-import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.LoadBalancerRegistry;
 import io.grpc.internal.ObjectPool;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -43,9 +43,6 @@ final class LbPolicyConfiguration {
 
   private final RouteLookupConfig routeLookupConfig;
   private final LoadBalancingPolicy policy;
-  // TODO is this the best place?
-  private final Map<String /* target */, ObjectPool<ChildPolicyWrapper>> childPolicyMap =
-      new HashMap<>();
 
   public LbPolicyConfiguration(RouteLookupConfig routeLookupConfig, LoadBalancingPolicy policy) {
     this.routeLookupConfig = checkNotNull(routeLookupConfig, "routeLookupConfig");
@@ -56,74 +53,43 @@ final class LbPolicyConfiguration {
     return routeLookupConfig;
   }
 
-  public void addChildPolicyWrapper(ChildPolicyWrapper childPolicy) {
-    ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(childPolicy.target);
-    if (existing != null) {
-      // TODO(creamsoup) should check if the wrapper is same or not?
-      existing.getObject();
-    } else {
-      childPolicyMap.put(childPolicy.target, new RefCountedChildPolicy(childPolicy));
-    }
-  }
-
-  public void returnChildPolicyWrapper(ChildPolicyWrapper childPolicy) {
-    ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(childPolicy.target);
-    checkState(existing != null, "doesn't exists!");
-    existing.returnObject(childPolicy);
-  }
 
   public LoadBalancingPolicy getLoadBalancingPolicy() {
     return policy;
   }
 
-  public void cleanup() {
-    // TODO: verify state or something?
-    childPolicyMap.clear();
-  }
-
-  static final class ChildPolicyWrapper {
+  static final class ChildPolicyWrapper implements Closeable {
+    private static final Map<String /* target */, ObjectPool<ChildPolicyWrapper>> childPolicyMap =
+        new HashMap<>();
     private final String target;
-    private LoadBalancingPolicy policy;
+    private LoadBalancingPolicy childPolicy;
     private ConnectivityState connectivityState;
     private SubchannelPicker picker;
-    private Helper helper;
 
-    private final AtomicLong refCnt = new AtomicLong(1);
-
-    public void acquire() {
-      long currCnt = refCnt.getAndIncrement();
-      if (currCnt <= 0) {
-        refCnt.decrementAndGet();
-        throw new IllegalStateException("Cannot acquired already");
-      }
-    }
-
-    public void release() {
-      long currCnt = refCnt.decrementAndGet();
-      if (currCnt == 0) {
-        policy = null;
-        connectivityState = null;
-        picker = null;
-        helper = null;
-      } else if (currCnt < 0) {
-        throw new IllegalStateException("Cannot release already released object");
-      }
-    }
-
-    public ChildPolicyWrapper(String target) {
+    private ChildPolicyWrapper(String target) {
       this.target = target;
+    }
+
+    public static ChildPolicyWrapper create(String target) {
+      ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(target);
+      if (existing != null) {
+        return existing.getObject();
+      }
+      ChildPolicyWrapper childPolicyWrapper = new ChildPolicyWrapper(target);
+      childPolicyMap.put(target, RefCountedObjectPool.of(childPolicyWrapper));
+      return childPolicyWrapper;
     }
 
     public String getTarget() {
       return target;
     }
 
-    public LoadBalancingPolicy getPolicy() {
-      return policy;
+    public LoadBalancingPolicy getChildPolicy() {
+      return childPolicy;
     }
 
-    public void setPolicy(LoadBalancingPolicy policy) {
-      this.policy = policy;
+    public void setChildPolicy(LoadBalancingPolicy childPolicy) {
+      this.childPolicy = childPolicy;
     }
 
     public ConnectivityState getConnectivityState() {
@@ -142,12 +108,53 @@ final class LbPolicyConfiguration {
       this.picker = picker;
     }
 
-    public Helper getHelper() {
-      return helper;
+    public ChildPolicyWrapper acquire() {
+      return childPolicyMap.get(target).getObject();
     }
 
-    public void setHelper(Helper helper) {
-      this.helper = helper;
+    public void release() {
+      ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(target);
+      checkState(existing != null, "doesn't exists!");
+      existing.returnObject(this);
+    }
+
+    @Override
+    public void close() {
+      // this might be error prone, if closed is called out side of release.
+      childPolicy = null;
+      connectivityState = null;
+      picker = null;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) {
+        return true;
+      }
+      if (o == null || getClass() != o.getClass()) {
+        return false;
+      }
+      ChildPolicyWrapper wrapper = (ChildPolicyWrapper) o;
+      return Objects.equal(target, wrapper.target)
+          && Objects.equal(childPolicy, wrapper.childPolicy)
+          && connectivityState == wrapper.connectivityState
+          && Objects.equal(picker, wrapper.picker);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hashCode(childPolicyMap, target, childPolicy, connectivityState, picker);
+    }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("childPolicyMap", childPolicyMap)
+          .add("target", target)
+          .add("childPolicy", childPolicy)
+          .add("connectivityState", connectivityState)
+          .add("picker", picker)
+          .toString();
     }
   }
 
@@ -216,35 +223,41 @@ final class LbPolicyConfiguration {
     }
   }
 
-  private static final class RefCountedChildPolicy implements ObjectPool<ChildPolicyWrapper> {
+  private static class RefCountedObjectPool<T extends Closeable> implements ObjectPool<T> {
 
-    private final ChildPolicyWrapper childPolicy;
-    private AtomicInteger refCount = new AtomicInteger(1);
+    private final AtomicLong refCnt = new AtomicLong(1);
+    private T t;
 
-    public RefCountedChildPolicy(ChildPolicyWrapper childPolicy) {
-      this.childPolicy = checkNotNull(childPolicy, "childPolicy");
+    private RefCountedObjectPool(T t) {
+      this.t = t;
     }
 
     @Override
-    public ChildPolicyWrapper getObject() {
-      checkState(refCount.getAndIncrement() != 0, "bad!");
-      return childPolicy;
+    public T getObject() {
+      long curr = refCnt.getAndIncrement();
+      if (curr <= 0) {
+        throw new IllegalStateException("already released");
+      }
+      return t;
     }
 
     @Override
-    public ChildPolicyWrapper returnObject(Object object) {
-      checkArgument(childPolicy == object, "got invalid object");
-      int newCount = refCount.decrementAndGet();
-      checkState(newCount >= 0, "already returned?");
-      if (newCount == 0) {
-        cleanup();
+    public T returnObject(Object object) {
+      checkState(t == object, "returned wrong object");
+      long newCnt = refCnt.decrementAndGet();
+      if (newCnt == 0) {
+        try {
+          t.close();
+        } catch (IOException e) {
+          throw new RuntimeException("error during close", e);
+        }
         return null;
       }
-      return childPolicy;
+      return t;
     }
 
-    private void cleanup() {
-      //TODO impl
+    public static <T extends Closeable> RefCountedObjectPool<T> of(T t) {
+      return new RefCountedObjectPool<>(t);
     }
   }
 }

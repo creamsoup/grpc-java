@@ -32,16 +32,18 @@ import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.RlsProtoConverters.RouteLookupResponseConverter;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import io.grpc.rls.RlsProtoData.RouteLookupResponse;
+import io.grpc.rls.RouteLookupClientImpl.RouteLookupInfoImpl;
 import io.grpc.rls.Throttler.ThrottledException;
 import io.grpc.stub.StreamObserver;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import javax.annotation.Nullable;
 
 final class RouteLookupClientImpl
-    extends AsyncRequestCache2<RouteLookupRequest, RouteLookupClientImpl.RouteLookupInfoImpl>
+    extends AsyncRequestCache<RouteLookupRequest, RouteLookupInfoImpl>
     implements RouteLookupClient {
 
   private static final Converter<RouteLookupRequest, io.grpc.lookup.v1alpha1.RouteLookupRequest>
@@ -55,6 +57,7 @@ final class RouteLookupClientImpl
 
   private RouteLookupClientImpl(Builder builder) {
     super(
+        Executors.newSingleThreadScheduledExecutor(),
         builder.executor,
         builder.maxAgeMillis,
         builder.staleAgeMillis,
@@ -208,7 +211,7 @@ final class RouteLookupClientImpl
     public static RouteLookupInfoImpl create(
         RouteLookupRequest request,
         ListenableFuture<RouteLookupResponse> response) {
-      ChildPolicyWrapper wrapper = new ChildPolicyWrapper(request.getServer());
+      ChildPolicyWrapper wrapper = ChildPolicyWrapper.create(request.getServer());
       return new RouteLookupInfoImpl(response, wrapper);
     }
 
@@ -216,7 +219,7 @@ final class RouteLookupClientImpl
       SettableFuture<RouteLookupResponse> throttledFuture = SettableFuture.create();
       ThrottledException throttledException = new ThrottledException();
       throttledFuture.setException(throttledException);
-      ChildPolicyWrapper wrapper = new ChildPolicyWrapper(request.getServer());
+      ChildPolicyWrapper wrapper = ChildPolicyWrapper.create(request.getServer());
       return new RouteLookupInfoImpl(throttledFuture, wrapper);
     }
 

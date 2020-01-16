@@ -20,16 +20,14 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
-import com.google.common.cache.RemovalListener;
-import com.google.common.cache.RemovalNotification;
 import com.google.common.util.concurrent.ListenableFuture;
+import io.grpc.LoadBalancer.Helper;
 import io.grpc.rls.AdaptiveThrottler.SystemTicker;
 import io.grpc.rls.AdaptiveThrottler.Ticker;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
+import io.grpc.rls.LruCache.RemovalListener;
+import io.grpc.rls.LruCache.RemovalReason;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.CheckReturnValue;
 import javax.annotation.Nullable;
@@ -37,8 +35,8 @@ import javax.annotation.concurrent.ThreadSafe;
 
 /**
  * An AsyncRequestCache is a cache for expensive RPC call. All the methods in this class are non
- * blocking. This async behavior is reflected to the {@link #get(Object)} method, when the cache
- * is requested but not fully populated, it returns uncompleted {@link ListenableFuture} which
+ * blocking. This async behavior is reflected to the {@link #get(Object, Helper)} method, when the
+ * cache is requested but not fully populated, it returns uncompleted {@link ListenableFuture} which
  * allows the users to wait or ignore until the computation is completed.
  *
  * <p>On top of regular cache behavior, it supports max age and stale state of cache value. The key
@@ -46,49 +44,46 @@ import javax.annotation.concurrent.ThreadSafe;
  * between staled and max), AsyncRequestCache will asynchronously refresh the entry.
  */
 @ThreadSafe
-abstract class AsyncRequestCache<K, V> {
+abstract class AsyncRequestCache<K, V extends ListenableFuture> {
 
-  private final Cache<K, CacheEntry> cache;
+  // LRU cache based on access order
+  private final LruCache<K, CacheEntry> lruCache;
   private final Executor executor;
   private final Ticker ticker;
 
   private final long maxAgeMillis;
   private final long staleAgeMillis;
   private final long callTimeoutMillis;
+  private final int maxSize;
 
   AsyncRequestCache(
+      ScheduledExecutorService ses,
       Executor executor,
       long maxAgeMillis,
       long staleAgeMillis,
       long maxCacheSize,
       long callTimeoutMillis) {
-    this.executor = checkNotNull(executor, "executor");
-    checkState(maxAgeMillis > 0, "maxAgeMillis should be positive");
-    checkState(staleAgeMillis > 0, "staleAgeMillis should be positive");
-    checkState(
-        maxAgeMillis >= staleAgeMillis,
-        "maxAgeMillis should be greater than equals to staleAgeMillis");
-    checkState(callTimeoutMillis > 0, "callTimeoutMillis should be positive");
-    this.maxAgeMillis = maxAgeMillis;
-    this.staleAgeMillis = staleAgeMillis;
-    this.callTimeoutMillis = callTimeoutMillis;
-    ticker = new SystemTicker();
-    cache = CacheBuilder.newBuilder()
-        .maximumSize(maxCacheSize)
-        .expireAfterWrite(maxAgeMillis + callTimeoutMillis, TimeUnit.MILLISECONDS)
-        .build();
+    this(
+        ses,
+        executor,
+        maxAgeMillis,
+        staleAgeMillis,
+        maxCacheSize,
+        callTimeoutMillis,
+        new SystemTicker(),
+        /* removalListener= */ null);
   }
 
   @VisibleForTesting
-  @SuppressWarnings("BetaApi") // Test only.
   AsyncRequestCache(
+      ScheduledExecutorService ses,
       Executor executor,
       long maxAgeMillis,
       long staleAgeMillis,
       long maxCacheSize,
       long callTimeoutMillis,
       Ticker ticker,
-      final RemovalListener<K, ListenableFuture<V>> removalListener) {
+      RemovalListener<K, V> removalListener) {
     this.executor = checkNotNull(executor, "executor");
     checkState(maxAgeMillis > 0, "maxAgeMillis should be positive");
     checkState(staleAgeMillis > 0, "staleAgeMillis should be positive");
@@ -100,35 +95,25 @@ abstract class AsyncRequestCache<K, V> {
     this.staleAgeMillis = staleAgeMillis;
     this.callTimeoutMillis = callTimeoutMillis;
     this.ticker = checkNotNull(ticker, "ticker");
-    checkNotNull(removalListener, "removalListener");
-    cache = CacheBuilder.newBuilder()
-        .maximumSize(maxCacheSize)
-        // .concurrencyLevel(Runtime.getRuntime().availableProcessors())
-        .expireAfterWrite(maxAgeMillis + callTimeoutMillis, TimeUnit.MILLISECONDS)
-        .ticker(new com.google.common.base.Ticker() {
-          @Override
-          public long read() {
-            return TimeUnit.MILLISECONDS.toNanos(AsyncRequestCache.this.ticker.nowInMillis());
-          }
-        })
-        .removalListener(new RemovalListener<K, CacheEntry>() {
-          @Override
-          public void onRemoval(RemovalNotification<K, CacheEntry> notification) {
-            if (notification.wasEvicted()) {
-              removalListener.onRemoval(
-                  RemovalNotification.create(
-                      notification.getKey(),
-                      notification.getValue().getValue(),
-                      notification.getCause()));
-            }
-          }
-        })
-        .build();
+    this.maxSize = (int) maxCacheSize;
+    this.lruCache =  new LruCache<K, CacheEntry>(
+        maxSize,
+        new DelegatingRemovalListener(removalListener),
+        1,
+        TimeUnit.MINUTES,
+        ses,
+        ticker) {
+
+      @Override
+      protected boolean isExpired(K key, CacheEntry value, long nowInMillis) {
+        return value.expireTime < nowInMillis;
+      }
+    };
   }
 
   /** Performs an async RPC call if cached value doesn't exists. */
   @CheckReturnValue
-  protected abstract ListenableFuture<V> rpcCall(K key);
+  protected abstract V rpcCall(K key, Helper helper);
 
   /**
    * Returns the value associated with {@code key} in this cache, obtaining that value from {@code
@@ -137,178 +122,65 @@ abstract class AsyncRequestCache<K, V> {
    * Callers may wait for the future if necessary.
    */
   @CheckReturnValue
-  public final synchronized ListenableFuture<V> get2(final K key) {
+  public final synchronized V get(final K key, Helper helper) {
     final CacheEntry cacheEntry;
-    try {
-      cacheEntry = cache.get(key, new Callable<CacheEntry>() {
-        @Override
-        public CacheEntry call() throws Exception {
-          // handle complete cache miss
-          return AsyncRequestCache.this.populateCache(key);
-        }
-      });
-
-      if (cacheEntry.status == CallStatus.PENDING) {
-        return cacheEntry.getValue();
-      }
-
-      long now = ticker.nowInMillis();
-      if (cacheEntry.expireTime <= now) {
-        // Cache is expired
-        if (!cacheEntry.refreshInitiated) {
-          cache.invalidate(key);
-          return cache.get(key, new Callable<CacheEntry>() {
-            @Override
-            public CacheEntry call() throws Exception {
-              return populateCache(key);
-            }
-          }).getValue();
-        }
-        // Impossible, because refresh is replacing the old CacheEntry
-        throw new AssertionError("This is a bug, please report an issue.");
-      } else if (cacheEntry.staleTime <= now) {
-        // current entry is staled, but not expired yet.
-        if (!cacheEntry.refreshInitiated) {
-          cache.invalidate(key);
-          cache.get(key, new Callable<CacheEntry>() {
-            @Override
-            public CacheEntry call() throws Exception {
-              refresh(key, cacheEntry);
-              return cacheEntry;
-            }
-          });
-        }
-        return cacheEntry.getValue();
-      }
-      // cache hit!
-      return cacheEntry.getValue();
-    } catch (ExecutionException e) {
-      throw new AssertionError(e.getCause());
+    cacheEntry = lruCache.get(key);
+    if (cacheEntry == null) {
+      return populateCache(key, helper).getValue();
     }
-  }
 
-  /**
-   * Returns the value associated with {@code key} in this cache, obtaining that value from {@code
-   * loader} if necessary. The method improves upon the conventional "if cached, return; otherwise
-   * create, cache and return" pattern. If the cache was not present, it returns a future value.
-   * Callers may wait for the future if necessary.
-   */
-  @CheckReturnValue
-  public final synchronized ListenableFuture<V> get1(final K key) {
-    final CacheEntry cacheEntry;
-    try {
-      cacheEntry = cache.get(key, new Callable<CacheEntry>() {
-        @Override
-        public CacheEntry call() throws Exception {
-          // handle complete cache miss
-          return AsyncRequestCache.this.populateCache(key);
-        }
-      });
-
-      if (cacheEntry.status == CallStatus.PENDING) {
-        return cacheEntry.getValue();
-      }
-
-      long now = ticker.nowInMillis();
-      if (cacheEntry.expireTime <= now) {
-        // Cache is expired
-        if (!cacheEntry.refreshInitiated) {
-          return populateCache(key).getValue();
-        }
-        // Impossible, because refresh is replacing the old CacheEntry
-        throw new AssertionError("This is a bug, please report an issue.");
-      } else if (cacheEntry.staleTime <= now) {
-        // current entry is staled, but not expired yet.
-        if (!cacheEntry.refreshInitiated) {
-          refresh(key, cacheEntry);
-        }
-        return cacheEntry.getValue();
-      }
-      // cache hit!
+    if (cacheEntry.status == CallStatus.PENDING) {
       return cacheEntry.getValue();
-    } catch (ExecutionException e) {
-      throw new AssertionError(e.getCause());
     }
-  }
 
-  /**
-   * Returns the value associated with {@code key} in this cache, obtaining that value from {@code
-   * loader} if necessary. The method improves upon the conventional "if cached, return; otherwise
-   * create, cache and return" pattern. If the cache was not present, it returns a future value.
-   * Callers may wait for the future if necessary.
-   */
-  @CheckReturnValue
-  public final synchronized ListenableFuture<V> get(final K key) {
-    final CacheEntry cacheEntry;
-    try {
-      cacheEntry = cache.get(key, new Callable<CacheEntry>() {
-        @Override
-        public CacheEntry call() throws Exception {
-          // handle complete cache miss
-          return AsyncRequestCache.this.populateCache(key);
-        }
-      });
-
-      if (cacheEntry.status == CallStatus.PENDING) {
-        return cacheEntry.getValue();
+    long now = ticker.nowInMillis();
+    // check if entry is staled and fire async-refresh
+    if (cacheEntry.staleTime <= now) {
+      if (!cacheEntry.refreshInitiated) {
+        refresh(key, cacheEntry, helper);
       }
-
-      long now = ticker.nowInMillis();
-      if (cacheEntry.expireTime <= now) {
-        // Cache is expired
-        if (!cacheEntry.refreshInitiated) {
-          return populateCache(key).getValue();
-        }
-        // Impossible, because refresh is replacing the old CacheEntry
-        throw new AssertionError("This is a bug, please report an issue.");
-      } else if (cacheEntry.staleTime <= now) {
-        // current entry is staled, but not expired yet.
-        if (!cacheEntry.refreshInitiated) {
-          refresh(key, cacheEntry);
-        }
-        return cacheEntry.getValue();
-      }
-      // cache hit!
-      return cacheEntry.getValue();
-    } catch (ExecutionException e) {
-      throw new AssertionError(e.getCause());
     }
+    return cacheEntry.getValue();
   }
 
   /** Performs any pending maintenance operations needed by the cache. */
   public synchronized void cleanUp() {
-    cache.cleanUp();
+    lruCache.close();
   }
 
-  private CacheEntry populateCache(K key) {
-    return populateCache(key, null);
+  private CacheEntry populateCache(K key, Helper helper) {
+    return populateCache(key, null, helper);
   }
 
-  private CacheEntry populateCache(K key, @Nullable CacheEntry staledEntry) {
-    final ListenableFuture<V> future = rpcCall(key);
+  private CacheEntry populateCache(final K key, @Nullable CacheEntry staledEntry, Helper helper) {
+    // all the put is though this method, perform clean up
+    final V future = rpcCall(key, helper);
     final CacheEntry cacheEntry = new CacheEntry(key, future, staledEntry);
     future.addListener(
         new Runnable() {
           @Override
           public void run() {
             if (future.isCancelled()) {
+              lruCache.remove(key, RemovalReason.ERROR);
               return;
             }
 
             try {
-              V unused = future.get();
+              Object unused = future.get();
               // update cache's internal states when call is successfully finished
               long nowInMillis = ticker.nowInMillis();
               cacheEntry.expireTime = nowInMillis + maxAgeMillis;
               cacheEntry.staleTime = nowInMillis + staleAgeMillis;
               cacheEntry.status = CallStatus.FINISHED;
             } catch (Exception e) {
-              // no-op
+              // GO BACKOFF STATUS
+              // failed cache shouldn't be cached
+              // TODO(creamsoup) how to handle if anything waiting for this result???
             }
           }
         },
         executor);
-    cache.put(key, cacheEntry);
+    lruCache.put(key, cacheEntry);
     return cacheEntry;
   }
 
@@ -323,12 +195,12 @@ abstract class AsyncRequestCache<K, V> {
    * entry2:                        | OV | pending | hasValue | staled |
    * </pre>
    */
-  private void refresh(final K key, CacheEntry oldValue) {
+  private void refresh(final K key, CacheEntry oldValue, Helper helper) {
     if (oldValue.refreshInitiated) {
       return;
     }
     oldValue.refreshInitiated = true;
-    populateCache(key, oldValue);
+    populateCache(key, oldValue, helper);
   }
 
   /**
@@ -344,12 +216,16 @@ abstract class AsyncRequestCache<K, V> {
      * Call is still on the fly, but it may currently serving staled value if it was replacing
      * staled entry.
      */
-    PENDING
+    PENDING,
+    /**
+     * Call is failed and we are in exponential backoff pending a potential retry.
+     */
+    BACKOFF
   }
 
   private final class CacheEntry {
     final K key;
-    final ListenableFuture<V> value;
+    final V value;
     boolean refreshInitiated = false;
 
     long expireTime;
@@ -357,11 +233,16 @@ abstract class AsyncRequestCache<K, V> {
     CallStatus status = CallStatus.PENDING;
 
     @Nullable
-    final ListenableFuture<V> staledValue;
+    final V staledValue;
     final long staledValueExpireTime;
 
+    // TODO add/handle those
+    // BackOff backOffState;
+    // backoff timer
+    // backoffCallback
+    // backoffExpirationTime
 
-    CacheEntry(K key, ListenableFuture<V> value, @Nullable CacheEntry staledEntry) {
+    CacheEntry(K key, V value, @Nullable CacheEntry staledEntry) {
       this.key = checkNotNull(key, "key");
       this.value = checkNotNull(value, "value");
       this.staledValue = staledEntry != null ? staledEntry.value : null;
@@ -376,7 +257,7 @@ abstract class AsyncRequestCache<K, V> {
      * old available cache entry, it can still returns previous value until previous value is
      * expired or new value is available.
      */
-    public ListenableFuture<V> getValue() {
+    public V getValue() {
       if (!value.isDone()
           && !value.isCancelled()
           && staledValue != null
@@ -384,6 +265,20 @@ abstract class AsyncRequestCache<K, V> {
         return staledValue;
       }
       return value;
+    }
+  }
+
+  private final class DelegatingRemovalListener implements RemovalListener<K, CacheEntry> {
+
+    private final RemovalListener<K, V> delegate;
+
+    public DelegatingRemovalListener(RemovalListener<K, V> delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public void onRemoval(K key, CacheEntry value, RemovalReason reason) {
+      delegate.onRemoval(key, value.getValue(), reason);
     }
   }
 }
