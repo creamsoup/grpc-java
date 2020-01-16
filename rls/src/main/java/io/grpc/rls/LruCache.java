@@ -39,6 +39,7 @@ import javax.annotation.concurrent.ThreadSafe;
  * expired entries based on configured time interval.
  */
 // TODO consider striped lock to increase performance in concurrent env
+//  when max size reached, should it clean all? because it is still o(n)
 @ThreadSafe
 public abstract class LruCache<K, V> {
 
@@ -87,8 +88,11 @@ public abstract class LruCache<K, V> {
     periodicCleaner = new PeriodicCleaner(ses, cleaningInterval, cleaningIntervalUnit).start();
   }
 
+  /** Puts a cache entry. If the key already exists, it will replace the entry. */
   @Nullable
   public final V put(K key, V value) {
+    checkNotNull(key, "key");
+    checkNotNull(value, "value");
     synchronized (lock) {
       V existing = delegate.put(key, value);
       if (existing != null) {
@@ -98,9 +102,14 @@ public abstract class LruCache<K, V> {
     }
   }
 
+  /**
+   * Returns cached value for given key if exists. This operation doesn't return already expired
+   * cache entry.
+   */
   @Nullable
   @CheckReturnValue
   public final V get(K key) {
+    checkNotNull(key, "key");
     synchronized (lock) {
       V existing = delegate.get(key);
       if (existing != null && isExpired(key, existing, ticker.nowInMillis())) {
@@ -111,13 +120,23 @@ public abstract class LruCache<K, V> {
     }
   }
 
+  /**
+   * Invalidates an entry for given key if exists. This operation will trigger {@link
+   * RemovalListener} with {@link RemovalReason#EXPLICIT}.
+   */
   @Nullable
   public final V remove(K key) {
     return remove(key, RemovalReason.EXPLICIT);
   }
 
+  /**
+   * Invalidates an entry for given key if exists. This operation will trigger {@link
+   * RemovalListener} with given reason.
+   */
   @Nullable
   public final V remove(K key, RemovalReason reason) {
+    checkNotNull(key, "key");
+    checkNotNull(reason, "reason");
     synchronized (lock) {
       V existing = delegate.remove(key);
       if (existing != null) {
@@ -127,7 +146,21 @@ public abstract class LruCache<K, V> {
     }
   }
 
+  /**
+   * Invalidates cache entries for given keys. This operation will trigger {@link RemovalListener}
+   * with {@link RemovalReason#EXPLICIT}.
+   */
+  public final void removeAll(Iterable<K> keys) {
+    removeAll(keys, RemovalReason.EXPLICIT);
+  }
+
+  /**
+   * Invalidates cache entries for given keys. This operation will trigger {@link RemovalListener}
+   * with given reason.
+   */
   public final void removeAll(Iterable<K> keys, RemovalReason reason) {
+    checkNotNull(keys, "keys");
+    checkNotNull(reason, "reason");
     synchronized (lock) {
       for (K key : keys) {
         V existing = delegate.remove(key);
@@ -138,12 +171,17 @@ public abstract class LruCache<K, V> {
     }
   }
 
+  /** Returns {@code true} if given key is cached. */
   @CheckReturnValue
   public final boolean containsKey(K key) {
     // call get to handle expired
     return get(key) != null;
   }
 
+  /**
+   * Returns the size of cache. Note that the size can be larger than its true size because there
+   * might be already expired cache.
+   */
   @CheckReturnValue
   public final int size() {
     synchronized (lock) {
@@ -175,10 +213,15 @@ public abstract class LruCache<K, V> {
     return removedAny;
   }
 
+  /**
+   * Determines if the eldest entry should be kept or not when the cache size limit is reached. Note
+   * that LruCache is access level and the eldest is determined by access pattern.
+   */
   protected boolean shouldRemoveEldestEntry(K eldestKey, V eldestValue) {
     return true;
   }
 
+  /** Determines if the entry is already expired or not. */
   protected abstract boolean isExpired(K key, V value, long nowInMillis);
 
   public final void close() {
@@ -224,6 +267,8 @@ public abstract class LruCache<K, V> {
 
   /** A listener to notify when a cache entry is removed / evicted. */
   public interface RemovalListener<K, V> {
+
+    /** Notifies the listener when any cache entry is removed. */
     void onRemoval(K key, V value, RemovalReason reason);
   }
 
@@ -236,6 +281,7 @@ public abstract class LruCache<K, V> {
     }
   }
 
+  /** A RemovalReason indicates the eviction reason of the cache entry from {@link LruCache}. */
   public enum RemovalReason {
     /** Explicitly removed by user. */
     EXPLICIT,
