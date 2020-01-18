@@ -28,8 +28,8 @@ import static org.mockito.Mockito.verify;
 
 import com.google.common.base.MoreObjects;
 import io.grpc.rls.AdaptiveThrottler.Ticker;
-import io.grpc.rls.LruCache.EvictionListener;
-import io.grpc.rls.LruCache.EvictionType;
+import io.grpc.rls.LinkedHashLruCache.EvictionListener;
+import io.grpc.rls.LinkedHashLruCache.EvictionType;
 import java.util.Objects;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -45,7 +45,7 @@ import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
 @RunWith(JUnit4.class)
-public class LruCacheTest {
+public class LinkedHashLruCacheTest {
 
   private static final int MAX_SIZE = 5;
 
@@ -57,11 +57,11 @@ public class LruCacheTest {
 
   @Mock
   private EvictionListener<Integer, Entry> evictionListener;
-  private LruCache<Integer, Entry> cache;
+  private LinkedHashLruCache<Integer, Entry> cache;
 
   @Before
   public void setUp() {
-    this.cache = new LruCache<Integer, Entry>(
+    this.cache = new LinkedHashLruCache<Integer, Entry>(
         MAX_SIZE,
         evictionListener,
         10,

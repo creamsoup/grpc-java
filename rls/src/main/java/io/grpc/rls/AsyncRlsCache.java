@@ -22,8 +22,8 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.common.util.concurrent.ListenableFuture;
 import io.grpc.LoadBalancer.Helper;
 import io.grpc.rls.AdaptiveThrottler.Ticker;
-import io.grpc.rls.LruCache.EvictionListener;
-import io.grpc.rls.LruCache.EvictionType;
+import io.grpc.rls.LinkedHashLruCache.EvictionListener;
+import io.grpc.rls.LinkedHashLruCache.EvictionType;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -46,7 +46,7 @@ abstract class AsyncRlsCache<K, V extends ListenableFuture> {
 
   private final ScheduledExecutorService scheduledExecutorService;
   // LRU cache based on access order
-  private final LruCache<K, CacheEntry> lruCache;
+  private final LinkedHashLruCache<K, CacheEntry> linkedHashLruCache;
   private final Executor executor;
   private final Ticker ticker;
 
@@ -80,7 +80,7 @@ abstract class AsyncRlsCache<K, V extends ListenableFuture> {
     this.callTimeoutMillis = callTimeoutMillis;
     this.ticker = checkNotNull(ticker, "ticker");
     this.maxSizeBytes = (int) maxCacheSize;
-    this.lruCache =  new LruCache<K, CacheEntry>(
+    this.linkedHashLruCache =  new LinkedHashLruCache<K, CacheEntry>(
         maxSizeBytes,
         new CancelingEvictionListener(evictionListener),
         1,
@@ -93,8 +93,16 @@ abstract class AsyncRlsCache<K, V extends ListenableFuture> {
         // TODO what about refresh?
         return value.getStatus() == CallStatus.SUCCEEDED && value.expireTime <= nowInMillis;
       }
+
+      @Override
+      protected int estimateSizeOf(K key, CacheEntry value) {
+        return AsyncRlsCache.this.estimateSizeOf(key, value.getValue());
+      }
     };
   }
+
+  /** Returns estimated size of an entry. */
+  protected abstract int estimateSizeOf(K key, V value);
 
   /** Performs an async RPC call if cached value doesn't exists. */
   @CheckReturnValue
@@ -109,7 +117,7 @@ abstract class AsyncRlsCache<K, V extends ListenableFuture> {
   @CheckReturnValue
   public final synchronized V get(final K key, Helper helper) {
     final CacheEntry cacheEntry;
-    cacheEntry = lruCache.read(key);
+    cacheEntry = linkedHashLruCache.read(key);
     if (cacheEntry == null) {
       return populateCache(key, helper).getValue();
     }
@@ -130,7 +138,7 @@ abstract class AsyncRlsCache<K, V extends ListenableFuture> {
 
   /** Performs any pending maintenance operations needed by the cache. */
   public synchronized void cleanUp() {
-    lruCache.close();
+    linkedHashLruCache.close();
   }
 
   private CacheEntry populateCache(K key, Helper helper) {
@@ -142,7 +150,7 @@ abstract class AsyncRlsCache<K, V extends ListenableFuture> {
     final V future = rpcCall(key, helper);
     final CacheEntry cacheEntry = new CacheEntry(key, future, staledEntry);
     cacheEntry.registerRefreshCall(future);
-    lruCache.cache(key, cacheEntry);
+    linkedHashLruCache.cache(key, cacheEntry);
     return cacheEntry;
   }
 
@@ -305,7 +313,7 @@ abstract class AsyncRlsCache<K, V extends ListenableFuture> {
         public void run() {
           if (callFuture.isCancelled()) {
             // TODO Must check if staled is still valid or vice versa
-            lruCache.invalidate(key, EvictionType.ERROR);
+            linkedHashLruCache.invalidate(key, EvictionType.ERROR);
             return;
           }
 
@@ -328,7 +336,6 @@ abstract class AsyncRlsCache<K, V extends ListenableFuture> {
     void cleanup() {
       // called when cache is evicted or replaced
       // may need to cancel staled / curr
-
     }
   }
 
