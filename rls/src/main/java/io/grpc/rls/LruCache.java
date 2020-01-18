@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.annotation.CheckReturnValue;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
@@ -50,26 +51,25 @@ public abstract class LruCache<K, V> {
   private final PeriodicCleaner periodicCleaner;
   private final Ticker ticker;
   private final EvictionListener<K, V> evictionListener;
-  // TODO max size => max weight and each entry can have weight. if everything is 1, then same as
-  //  size
-  private final int maxSize;
+  private final int estimatedMaxSizeBytes;
+  private final AtomicLong estimatedSize = new AtomicLong();
 
   public LruCache(
-      final int maxSize,
+      final int maxEstimatedSizeBytes,
       @Nullable final EvictionListener<K, V> evictionListener,
       int cleaningInterval,
       TimeUnit cleaningIntervalUnit,
       ScheduledExecutorService ses,
       final Ticker ticker) {
-    checkState(maxSize > 0, "max cache size should be positive");
-    this.maxSize = maxSize;
-    this.evictionListener = evictionListener
-        == null ? new EmptyEvictionListener() : evictionListener;
+    checkState(maxEstimatedSizeBytes > 0, "max estimated cache size should be positive");
+    this.estimatedMaxSizeBytes = maxEstimatedSizeBytes;
+    this.evictionListener = new SizeHandlingEvictionListener(evictionListener);
     this.ticker = checkNotNull(ticker, "ticker");
-    delegate = new LinkedHashMap<K, V>(maxSize, /* loadFactor= */ 0.75f, /* accessOrder= */ true) {
+    delegate = new LinkedHashMap<K, V>(
+        maxEstimatedSizeBytes, /* loadFactor= */ 0.75f, /* accessOrder= */ true) {
       @Override
       protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
-        if (size() <= maxSize) {
+        if (size() <= maxEstimatedSizeBytes) {
           return false;
         }
 
@@ -91,18 +91,40 @@ public abstract class LruCache<K, V> {
     periodicCleaner = new PeriodicCleaner(ses, cleaningInterval, cleaningIntervalUnit).start();
   }
 
+  /**
+   * Determines if the eldest entry should be kept or not when the cache size limit is reached. Note
+   * that LruCache is access level and the eldest is determined by access pattern.
+   */
+  protected boolean shouldInvalidateEldestEntry(K eldestKey, V eldestValue) {
+    return true;
+  }
+
+  /** Determines if the entry is already expired or not. */
+  protected abstract boolean isExpired(K key, V value, long nowInMillis);
+
+  /**
+   * Returns estimated size of entry to keep track. If it always returns 1, the max size bytes
+   * behaves like max number of entry (default behavior).
+   */
+  // TODO(creamsoup) possibly store in the value with wrapper for tiny performance boost?
+  protected int estimateSizeOf(K key, V value) {
+    return 1;
+  }
+
   /** Populates a cache entry. If the key already exists, it will replace the entry. */
   @Nullable
   public final V cache(K key, V value) {
     checkNotNull(key, "key");
     checkNotNull(value, "value");
+    V existing;
     synchronized (lock) {
-      V existing = delegate.put(key, value);
+      existing = delegate.put(key, value);
       if (existing != null) {
         evictionListener.onEviction(key, existing, EvictionType.REPLACED);
       }
-      return existing;
     }
+    estimatedSize.addAndGet(estimateSizeOf(key, value));
+    return existing;
   }
 
   /**
@@ -186,10 +208,8 @@ public abstract class LruCache<K, V> {
    * might be already expired cache.
    */
   @CheckReturnValue
-  public final int estimatedSize() {
-    synchronized (lock) {
-      return delegate.size();
-    }
+  public final long estimatedSize() {
+    return estimatedSize.get();
   }
 
   private boolean cleanupExpiredEntries(long now) {
@@ -198,7 +218,7 @@ public abstract class LruCache<K, V> {
 
   private boolean cleanupExpiredEntries(int limit, long now) {
     if (limit == 0) {
-      limit = maxSize;
+      limit = estimatedMaxSizeBytes;
     }
     boolean removedAny = false;
     synchronized (lock) {
@@ -215,17 +235,6 @@ public abstract class LruCache<K, V> {
     }
     return removedAny;
   }
-
-  /**
-   * Determines if the eldest entry should be kept or not when the cache size limit is reached. Note
-   * that LruCache is access level and the eldest is determined by access pattern.
-   */
-  protected boolean shouldInvalidateEldestEntry(K eldestKey, V eldestValue) {
-    return true;
-  }
-
-  /** Determines if the entry is already expired or not. */
-  protected abstract boolean isExpired(K key, V value, long nowInMillis);
 
   public final void close() {
     //TODO maybe clear map/set?
@@ -274,16 +283,29 @@ public abstract class LruCache<K, V> {
   /** A listener to notify when a cache entry is evicted. */
   public interface EvictionListener<K, V> {
 
-    /** Notifies the listener when any cache entry is evicted. */
+    /**
+     * Notifies the listener when any cache entry is evicted. Implementation can assume that this
+     * method is not called concurrently. Implementation should be fast and non blocking, for long
+     * running task consider offloading to {@link java.util.concurrent.Executor}.
+     */
     void onEviction(K key, V value, EvictionType cause);
   }
 
-  /** A {@link EvictionListener} doesn't do anything. */
-  private final class EmptyEvictionListener implements EvictionListener<K, V> {
+  /** A {@link EvictionListener} keeps track of size. */
+  private final class SizeHandlingEvictionListener implements EvictionListener<K, V> {
+
+    private final EvictionListener<K, V> delegate;
+
+    SizeHandlingEvictionListener(@Nullable EvictionListener<K, V> delegate) {
+      this.delegate = delegate;
+    }
 
     @Override
     public void onEviction(K key, V value, EvictionType cause) {
-      // no-op
+      estimatedSize.addAndGet(-1 * estimateSizeOf(key, value));
+      if (delegate != null) {
+        delegate.onEviction(key, value, cause);
+      }
     }
   }
 

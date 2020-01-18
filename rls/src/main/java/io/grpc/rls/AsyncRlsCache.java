@@ -32,7 +32,7 @@ import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 
 /**
- * An AsyncRequestCache is a cache for expensive RPC call. All the methods in this class are non
+ * An AsyncRlsCache is a cache for rls service. All the methods in this class are non
  * blocking. This async behavior is reflected to the {@link #get(Object, Helper)} method, when the
  * cache is requested but not fully populated, it returns uncompleted {@link ListenableFuture} which
  * allows the users to wait or ignore until the computation is completed.
@@ -42,7 +42,7 @@ import javax.annotation.concurrent.ThreadSafe;
  * between staled and max), AsyncRequestCache will asynchronously refresh the entry.
  */
 @ThreadSafe
-abstract class AsyncRequestCache<K, V extends ListenableFuture> {
+abstract class AsyncRlsCache<K, V extends ListenableFuture> {
 
   private final ScheduledExecutorService scheduledExecutorService;
   // LRU cache based on access order
@@ -53,11 +53,11 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
   private final long maxAgeMillis;
   private final long staleAgeMillis;
   private final long callTimeoutMillis;
-  private final int maxSize;
+  private final int maxSizeBytes;
 
   // TODO: possibly have a sorted map of expire entry to proactively cleanup.
 
-  AsyncRequestCache(
+  AsyncRlsCache(
       ScheduledExecutorService scheduledExecutorService,
       Executor executor,
       long maxAgeMillis,
@@ -79,9 +79,9 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
     this.staleAgeMillis = staleAgeMillis;
     this.callTimeoutMillis = callTimeoutMillis;
     this.ticker = checkNotNull(ticker, "ticker");
-    this.maxSize = (int) maxCacheSize;
+    this.maxSizeBytes = (int) maxCacheSize;
     this.lruCache =  new LruCache<K, CacheEntry>(
-        maxSize,
+        maxSizeBytes,
         new CancelingEvictionListener(evictionListener),
         1,
         TimeUnit.MINUTES,

@@ -79,7 +79,7 @@ class RlsLoadBalancer extends LoadBalancer {
             //TODO just pass bigger object
             .setCallTimeoutMillis(rlsConfig.getLookupServiceTimeoutInMillis())
             .setTarget(rlsConfig.getLookupService())
-            .setMaxCacheSize(rlsConfig.getCacheSizeBytes())
+            .setMaxCacheSizeBytes(rlsConfig.getCacheSizeBytes())
             .setMaxAgeMillis(rlsConfig.getMaxAgeInMillis())
             .setStaleAgeMillis(rlsConfig.getStaleAgeInMillis())
             .setExecutor(helper.getSynchronizationContext())

@@ -33,6 +33,7 @@ import io.grpc.LoadBalancer.ResolvedAddresses;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancer.SubchannelStateListener;
+import io.grpc.Metadata;
 import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
 import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
@@ -47,6 +48,10 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
 public class RlsPicker extends SubchannelPicker {
+
+  /** A header will be added when RLS server respond with additional header data. */
+  public static final Metadata.Key RLS_DATA_KEY =
+      Metadata.Key.of("X-Google-RLS-Data", Metadata.ASCII_STRING_MARSHALLER);
 
   private LbPolicyConfiguration lbPolicyConfiguration;
   private RouteLookupClientImpl rlsClient; // cache is embedded
@@ -145,13 +150,10 @@ public class RlsPicker extends SubchannelPicker {
               @Override
               public PickResult pickSubchannel(PickSubchannelArgs args) {
                 String headerData = rlsResponse.getHeaderData();
-                //TODO fixme
-                // while (iter.hasNext()) {
-                //   String key = iter.next();
-                //   String val = iter.next();
-                //   args.getHeaders()
-                //       .put(Metadata.Key.of(key, Metadata.ASCII_STRING_MARSHALLER), val);
-                // }
+                if (headerData != null || !headerData.isEmpty()) {
+                  //TODO verify this works or not
+                  args.getHeaders().put(RLS_DATA_KEY, headerData);
+                }
                 return PickResult.withSubchannel(subChannel);
               }
             });

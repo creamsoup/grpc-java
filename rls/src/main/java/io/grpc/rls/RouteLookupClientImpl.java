@@ -44,7 +44,7 @@ import java.util.concurrent.TimeoutException;
 import javax.annotation.Nullable;
 
 final class RouteLookupClientImpl
-    extends AsyncRequestCache<RouteLookupRequest, RouteLookupInfoImpl>
+    extends AsyncRlsCache<RouteLookupRequest, RouteLookupInfoImpl>
     implements RouteLookupClient {
 
   private static final Converter<RouteLookupRequest, io.grpc.lookup.v1.RouteLookupRequest>
@@ -62,7 +62,7 @@ final class RouteLookupClientImpl
         builder.executor,
         builder.maxAgeMillis,
         builder.staleAgeMillis,
-        builder.maxCacheSize,
+        builder.maxCacheSizeBytes,
         builder.callTimeoutMillis,
         new SystemTicker(),
         null);
@@ -115,14 +115,14 @@ final class RouteLookupClientImpl
 
   public static final class Builder {
 
-    private static final long MAX_ALLOWED_CACHE_SIZE = 10_000;
+    private static final long MAX_ALLOWED_CACHE_SIZE_BYTES = 10_000;
 
     private String target;
     private Throttler throttler = new HappyThrottler();
     private Executor executor = MoreExecutors.directExecutor();
     private long maxAgeMillis = TimeUnit.MINUTES.toMillis(5);
     private long staleAgeMillis = TimeUnit.MINUTES.toMillis(4);
-    private long maxCacheSize = 128;
+    private long maxCacheSizeBytes = 128;
     private long callTimeoutMillis = 100L;
     private ManagedChannel oobChannel;
 
@@ -155,12 +155,12 @@ final class RouteLookupClientImpl
       return this;
     }
 
-    public Builder setMaxCacheSize(long maxCacheSize) {
+    public Builder setMaxCacheSizeBytes(long maxCacheSizeBytes) {
       checkArgument(
-          maxCacheSize <= MAX_ALLOWED_CACHE_SIZE,
-          "maxCacheSize should be smaller or equals to %s",
-          MAX_ALLOWED_CACHE_SIZE);
-      this.maxCacheSize = maxCacheSize;
+          maxCacheSizeBytes <= MAX_ALLOWED_CACHE_SIZE_BYTES,
+          "maxCacheSizeBytes should be smaller or equals to %s",
+          MAX_ALLOWED_CACHE_SIZE_BYTES);
+      this.maxCacheSizeBytes = maxCacheSizeBytes;
       return this;
     }
 

@@ -44,7 +44,7 @@ import org.junit.runners.JUnit4;
 
 @RunWith(JUnit4.class)
 @Ignore
-public class AsyncRequestCacheConcurrencyTest {
+public class AsyncRlsCacheConcurrencyTest {
   private static final Range<Integer> RPC_LATENCY_MILLIS = Range.closedOpen(2, 20);
   private static final int CACHE_SIZE = 100;
   private static final int EXPIRE_MILLIS = 200;
@@ -177,12 +177,12 @@ public class AsyncRequestCacheConcurrencyTest {
 
     TestConcurrentAsyncRlsCache() {
       super(
-          AsyncRequestCacheConcurrencyTest.this.ses,
+          AsyncRlsCacheConcurrencyTest.this.ses,
           EXPIRE_MILLIS,
           STALE_MILLIS,
           CACHE_SIZE,
           RPC_TIMEOUT_IN_MILLIS,
-          AsyncRequestCacheConcurrencyTest.this.ticker,
+          AsyncRlsCacheConcurrencyTest.this.ticker,
           new RemovalHandler());
     }
 
