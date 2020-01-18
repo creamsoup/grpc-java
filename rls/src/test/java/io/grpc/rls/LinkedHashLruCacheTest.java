@@ -28,8 +28,8 @@ import static org.mockito.Mockito.verify;
 
 import com.google.common.base.MoreObjects;
 import io.grpc.rls.AdaptiveThrottler.Ticker;
-import io.grpc.rls.LinkedHashLruCache.EvictionListener;
-import io.grpc.rls.LinkedHashLruCache.EvictionType;
+import io.grpc.rls.LruCache.EvictionListener;
+import io.grpc.rls.LruCache.EvictionType;
 import java.util.Objects;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -208,8 +208,11 @@ public class LinkedHashLruCacheTest {
     }
   }
 
-  // A fake ScheduledExecutorService only can handle one scheduledAtFixedRate with a lot of
-  // limitation / assumptions. Only intended to be used in this test with mock (CALL_REAL_METHODS).
+  /**
+   * A fake minimal implementation of ScheduledExecutorService *only* supports scheduledAtFixedRate
+   * with a lot of limitation / assumptions. Only intended to be used in this test with
+   * CALL_REAL_METHODS mock.
+   */
   private static abstract class FakeScheduledService implements ScheduledExecutorService {
 
     private long currTimeInMillis;

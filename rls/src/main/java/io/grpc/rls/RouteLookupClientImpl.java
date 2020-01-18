@@ -79,6 +79,21 @@ final class RouteLookupClientImpl
   }
 
   @Override
+  protected int estimateSizeOf(RouteLookupRequest key, RouteLookupInfoImpl value) {
+    if (value.routeLookupResponse.isDone()) {
+      try {
+        RouteLookupResponse response = value.routeLookupResponse.get();
+        // very rough estimate of string memory size in response
+        return (response.getTarget().length() + response.getHeaderData().length()) * 2 + 38 * 2;
+      } catch (Exception e) {
+        // ignore exception
+      }
+    }
+    // treat it as size of empty object
+    return 8;
+  }
+
+  @Override
   protected RouteLookupInfoImpl rpcCall(RouteLookupRequest request, Helper helper) {
     final SettableFuture<RouteLookupResponse> response = SettableFuture.create();
     if (throttler.shouldThrottle()) {

@@ -50,7 +50,7 @@ import java.util.concurrent.ExecutionException;
 public class RlsPicker extends SubchannelPicker {
 
   /** A header will be added when RLS server respond with additional header data. */
-  public static final Metadata.Key RLS_DATA_KEY =
+  public static final Metadata.Key<String> RLS_DATA_KEY =
       Metadata.Key.of("X-Google-RLS-Data", Metadata.ASCII_STRING_MARSHALLER);
 
   private LbPolicyConfiguration lbPolicyConfiguration;
