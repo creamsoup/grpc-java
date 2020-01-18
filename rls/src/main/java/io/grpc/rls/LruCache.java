@@ -50,6 +50,8 @@ public abstract class LruCache<K, V> {
   private final PeriodicCleaner periodicCleaner;
   private final Ticker ticker;
   private final EvictionListener<K, V> evictionListener;
+  // TODO max size => max weight and each entry can have weight. if everything is 1, then same as
+  //  size
   private final int maxSize;
 
   public LruCache(
@@ -228,7 +230,10 @@ public abstract class LruCache<K, V> {
   public final void close() {
     //TODO maybe clear map/set?
     periodicCleaner.stop();
+    doClose();
   }
+
+  protected void doClose() {}
 
   /** Periodically cleans up the AsyncRequestCache. */
   private final class PeriodicCleaner implements Runnable {

@@ -22,21 +22,19 @@ import com.google.common.base.Converter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import io.grpc.internal.JsonParser;
-import io.grpc.lookup.v1alpha1.RouteLookupRequest;
-import io.grpc.lookup.v1alpha1.RouteLookupResponse;
-import io.grpc.lookup.v1alpha1.RouteLookupResponse.Header;
+import io.grpc.lookup.v1.RouteLookupRequest;
+import io.grpc.lookup.v1.RouteLookupResponse;
 import io.grpc.rls.RlsProtoConverters.RouteLookupConfigConverter;
 import io.grpc.rls.RlsProtoConverters.RouteLookupRequestConverter;
 import io.grpc.rls.RlsProtoConverters.RouteLookupResponseConverter;
 import io.grpc.rls.RlsProtoData.GrpcKeyBuilder;
-import io.grpc.rls.RlsProtoData.Name;
+import io.grpc.rls.RlsProtoData.GrpcKeyBuilder.Name;
 import io.grpc.rls.RlsProtoData.NameMatcher;
 import io.grpc.rls.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -85,13 +83,13 @@ public class RlsProtoConvertersTest {
         new RouteLookupResponseConverter();
     RouteLookupResponse proto = RouteLookupResponse.newBuilder()
         .setTarget("target")
-        .addHeaders(Header.newBuilder().setHeader("key1").setValue("val1").build())
+        .setHeaderData("some header data")
         .build();
 
     RlsProtoData.RouteLookupResponse object = converter.convert(proto);
 
     assertThat(object.getTarget()).isEqualTo("target");
-    assertThat(object.getHeaders()).containsExactly("key1", "val1");
+    assertThat(object.getHeaderData()).isEqualTo("some header data");
   }
 
   @Test
@@ -100,13 +98,12 @@ public class RlsProtoConvertersTest {
         new RouteLookupResponseConverter().reverse();
 
     RlsProtoData.RouteLookupResponse object =
-        new RlsProtoData.RouteLookupResponse("target", ImmutableList.of("key1", "val1"));
+        new RlsProtoData.RouteLookupResponse("target", "some header data");
 
     RouteLookupResponse proto = converter.convert(object);
 
     assertThat(proto.getTarget()).isEqualTo("target");
-    assertThat(proto.getHeadersList())
-        .containsExactly(Header.newBuilder().setHeader("key1").setValue("val1").build());
+    assertThat(proto.getHeaderData()).isEqualTo("some header data");
   }
 
   @Test
@@ -120,21 +117,18 @@ public class RlsProtoConvertersTest {
         + "          \"method\": \"create\"\n"
         + "        }\n"
         + "      ],\n"
-        + "      \"headers\": {\n"
-        + "        \"user\": {\n"
-        + "          \"names\": [\n"
-        + "            \"User\",\n"
-        + "            \"Parent\"\n"
-        + "          ],\n"
+        + "      \"headers\": [\n"
+        + "        {\n"
+        + "          \"key\": \"user\","
+        + "          \"names\": [\"User\", \"Parent\"],\n"
         + "          \"optional\": true\n"
         + "        },\n"
-        + "        \"id\": {\n"
-        + "          \"names\": [\n"
-        + "            \"X-Google-Id\"\n"
-        + "          ],\n"
+        + "        {\n"
+        + "          \"key\": \"id\","
+        + "          \"names\": [\"X-Google-Id\"],\n"
         + "          \"optional\": true\n"
         + "        }\n"
-        + "      }\n"
+        + "      ]\n"
         + "    },\n"
         + "    {\n"
         + "      \"names\": [\n"
@@ -143,21 +137,18 @@ public class RlsProtoConvertersTest {
         + "          \"method\": \"*\"\n"
         + "        }\n"
         + "      ],\n"
-        + "      \"headers\": {\n"
-        + "        \"user\": {\n"
-        + "          \"names\": [\n"
-        + "            \"User\",\n"
-        + "            \"Parent\"\n"
-        + "          ],\n"
+        + "      \"headers\": [\n"
+        + "        {\n"
+        + "          \"key\": \"user\","
+        + "          \"names\": [\"User\", \"Parent\"],\n"
         + "          \"optional\": true\n"
         + "        },\n"
-        + "        \"password\": {\n"
-        + "          \"names\": [\n"
-        + "            \"Password\"\n"
-        + "          ],\n"
+        + "        {\n"
+        + "          \"key\": \"password\","
+        + "          \"names\": [\"Password\"],\n"
         + "          \"optional\": true\n"
         + "        }\n"
-        + "      }\n"
+        + "      ]\n"
         + "    },\n"
         + "    {\n"
         + "      \"names\": [\n"
@@ -166,22 +157,21 @@ public class RlsProtoConvertersTest {
         + "          \"method\": \"*\"\n"
         + "        }\n"
         + "      ],\n"
-        + "      \"headers\": {\n"
-        + "        \"user\": {\n"
-        + "          \"names\": [\n"
-        + "            \"User\",\n"
-        + "            \"Parent\"\n"
-        + "          ],\n"
+        + "      \"headers\": ["
+        + "        {\n"
+        + "          \"key\": \"user\","
+        + "          \"names\": [\"User\", \"Parent\"],\n"
         + "          \"optional\": true\n"
         + "        }\n"
-        + "      }\n"
+        + "      ]\n"
         + "    }\n"
         + "  ],\n"
         + "  \"lookupService\": \"service1\",\n"
         + "  \"lookupServiceTimeout\": 2,\n"
         + "  \"maxAge\": 300,\n"
         + "  \"staleAge\": 240,\n"
-        + "  \"cacheSize\": 1000,\n"
+        + "  \"validTargets\": [\"a valid target\"],"
+        + "  \"cacheSizeBytes\": 1000,\n"
         + "  \"defaultTarget\": \"us_east_1.cloudbigtable.googleapis.com\",\n"
         + "  \"requestProcessingStrategy\": \"ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS\"\n"
         + "}";
@@ -191,28 +181,24 @@ public class RlsProtoConvertersTest {
             ImmutableList.of(
                 new GrpcKeyBuilder(
                     ImmutableList.of(new Name("service1", "create")),
-                    ImmutableMap.of(
-                        "user",
-                        new NameMatcher(ImmutableList.of("User", "Parent")),
-                        "id",
-                        new NameMatcher(ImmutableList.of("X-Google-Id")))),
+                    ImmutableList.of(
+                        new NameMatcher("user", ImmutableList.of("User", "Parent"), true),
+                        new NameMatcher("id", ImmutableList.of("X-Google-Id"), true))),
                 new GrpcKeyBuilder(
                     ImmutableList.of(new Name("service1")),
-                    ImmutableMap.of(
-                        "user",
-                        new NameMatcher(ImmutableList.of("User", "Parent")),
-                        "password",
-                        new NameMatcher(ImmutableList.of("Password")))),
+                    ImmutableList.of(
+                        new NameMatcher("user", ImmutableList.of("User", "Parent"), true),
+                        new NameMatcher("password", ImmutableList.of("Password"), true))),
                 new GrpcKeyBuilder(
                     ImmutableList.of(new Name("service3")),
-                    ImmutableMap.of(
-                        "user",
-                        new NameMatcher(ImmutableList.of("User", "Parent"))))),
+                    ImmutableList.of(
+                        new NameMatcher("user", ImmutableList.of("User", "Parent"), true)))),
             /* lookupService= */ "service1",
             /* lookupServiceTimeoutInMillis= */ TimeUnit.SECONDS.toMillis(2),
             /* maxAgeInMillis= */ TimeUnit.SECONDS.toMillis(300),
             /* staleAgeInMillis= */ TimeUnit.SECONDS.toMillis(240),
             /* cacheSize= */ 1000,
+            /* validTargets= */ ImmutableList.of("a valid target"),
             /* defaultTarget= */ "us_east_1.cloudbigtable.googleapis.com",
             RequestProcessingStrategy.ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS);
 

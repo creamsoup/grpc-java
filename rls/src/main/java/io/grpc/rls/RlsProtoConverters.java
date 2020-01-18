@@ -21,18 +21,15 @@ import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.Converter;
 import io.grpc.internal.JsonUtil;
-import io.grpc.lookup.v1alpha1.RouteLookupRequest;
-import io.grpc.lookup.v1alpha1.RouteLookupResponse;
-import io.grpc.lookup.v1alpha1.RouteLookupResponse.Header;
+import io.grpc.lookup.v1.RouteLookupRequest;
+import io.grpc.lookup.v1.RouteLookupResponse;
 import io.grpc.rls.RlsProtoData.GrpcKeyBuilder;
-import io.grpc.rls.RlsProtoData.Name;
+import io.grpc.rls.RlsProtoData.GrpcKeyBuilder.Name;
 import io.grpc.rls.RlsProtoData.NameMatcher;
 import io.grpc.rls.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -72,6 +69,7 @@ final class RlsProtoConverters {
               .build();
     }
   }
+
   /**
    * A RouteLookupResponseConverter converts between {@link RouteLookupResponse} and {@link
    * RlsProtoData.RouteLookupResponse}.
@@ -84,44 +82,15 @@ final class RlsProtoConverters {
       return
           new RlsProtoData.RouteLookupResponse(
               routeLookupResponse.getTarget(),
-              new HeadersConverter().convert(routeLookupResponse.getHeadersList()));
+              routeLookupResponse.getHeaderData());
     }
 
     @Override
     protected RouteLookupResponse doBackward(RlsProtoData.RouteLookupResponse routeLookupResponse) {
       return RouteLookupResponse.newBuilder()
           .setTarget(routeLookupResponse.getTarget())
-          .addAllHeaders(new HeadersConverter().reverse().convert(routeLookupResponse.getHeaders()))
+          .setHeaderData(routeLookupResponse.getHeaderData())
           .build();
-    }
-  }
-
-  // Note: it usually not a good idea to converts collections to collection (should use convertAll)
-  //  for convenience / performance reason, this class doesn't follow the convention (not exposed).
-  private static final class HeadersConverter extends Converter<List<Header>, List<String>> {
-
-    @Override
-    protected List<String> doForward(List<Header> headers) {
-      List<String> headerList = new ArrayList<>(headers.size() * 2);
-      for (Header header : headers) {
-        headerList.add(header.getHeader());
-        headerList.add(header.getValue());
-      }
-      return headerList;
-    }
-
-    @Override
-    protected List<Header> doBackward(List<String> headers) {
-      checkArgument(headers.size() % 2 == 0, "Invalid header size: %s", headers.size());
-
-      List<Header> headerList = new ArrayList<>(headers.size() / 2);
-      Iterator<String> iter = headers.iterator();
-      while (iter.hasNext()) {
-        String header = iter.next();
-        String value = iter.next();
-        headerList.add(Header.newBuilder().setHeader(header).setValue(value).build());
-      }
-      return headerList;
     }
   }
 
@@ -146,8 +115,9 @@ final class RlsProtoConverters {
       long staleAge =
           TimeUnit.SECONDS.toMillis(
               JsonUtil.getDouble(json, "staleAge").longValue());
-      long cacheSize = JsonUtil.getDouble(json, "cacheSize").longValue();
-      String defaultTarget = JsonUtil.getString(json, "defaultTarget");
+      long cacheSize = JsonUtil.getDouble(json, "cacheSizeBytes").longValue();
+      List<String> validTargets = JsonUtil.checkStringList(JsonUtil.getList(json, "validTargets"));
+          String defaultTarget = JsonUtil.getString(json, "defaultTarget");
       RequestProcessingStrategy strategy =
           RequestProcessingStrategy
               .valueOf(JsonUtil.getString(json, "requestProcessingStrategy").toUpperCase());
@@ -158,6 +128,7 @@ final class RlsProtoConverters {
           maxAge,
           staleAge,
           cacheSize,
+          validTargets,
           defaultTarget,
           strategy);
     }
@@ -198,22 +169,20 @@ final class RlsProtoConverters {
             new Name(
                 JsonUtil.getString(rawName, "service"), JsonUtil.getString(rawName, "method")));
       }
-      Map<String, ?> rawHeaders = JsonUtil.getObject(keyBuilder, "headers");
-      Map<String, NameMatcher> nameMatcherMap = new LinkedHashMap<>();
-      for (Map.Entry<String, ?> rawHeader : rawHeaders.entrySet()) {
-        checkArgument(
-            rawHeader.getValue() instanceof Map,
-            "expect object type for header %s", rawHeader.getKey());
-        Map<String, ?> headerValue = (Map<String, ?>) rawHeader.getValue();
+      List<Map<String, ?>> rawHeaders =
+          JsonUtil.checkObjectList(JsonUtil.getList(keyBuilder, "headers"));
+      List<NameMatcher> nameMatchers = new ArrayList<>();
+      for (Map<String, ?> rawHeader : rawHeaders) {
         NameMatcher matcher =
             new NameMatcher(
-                (List<String>) headerValue.get("names"),
-                (Boolean) headerValue.get("optional"));
+                JsonUtil.getString(rawHeader, "key"),
+                (List<String>) rawHeader.get("names"),
+                (Boolean) rawHeader.get("optional"));
         checkArgument(
             matcher.isOptional(), "NameMatcher for GrpcKeyBuilders shouldn't be required");
-        nameMatcherMap.put(rawHeader.getKey(), matcher);
+        nameMatchers.add(matcher);
       }
-      return new GrpcKeyBuilder(names, nameMatcherMap);
+      return new GrpcKeyBuilder(names, nameMatchers);
     }
   }
 }

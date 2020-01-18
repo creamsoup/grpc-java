@@ -44,6 +44,7 @@ import javax.annotation.concurrent.ThreadSafe;
 @ThreadSafe
 abstract class AsyncRequestCache<K, V extends ListenableFuture> {
 
+  private final ScheduledExecutorService scheduledExecutorService;
   // LRU cache based on access order
   private final LruCache<K, CacheEntry> lruCache;
   private final Executor executor;
@@ -57,7 +58,7 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
   // TODO: possibly have a sorted map of expire entry to proactively cleanup.
 
   AsyncRequestCache(
-      ScheduledExecutorService ses,
+      ScheduledExecutorService scheduledExecutorService,
       Executor executor,
       long maxAgeMillis,
       long staleAgeMillis,
@@ -65,6 +66,8 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
       long callTimeoutMillis,
       Ticker ticker,
       EvictionListener<K, V> evictionListener) {
+    this.scheduledExecutorService =
+        checkNotNull(scheduledExecutorService, "scheduledExecutorService");
     this.executor = checkNotNull(executor, "executor");
     checkState(maxAgeMillis > 0, "maxAgeMillis should be positive");
     checkState(staleAgeMillis > 0, "staleAgeMillis should be positive");
@@ -79,15 +82,16 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
     this.maxSize = (int) maxCacheSize;
     this.lruCache =  new LruCache<K, CacheEntry>(
         maxSize,
-        new DelegatingEvictionListener(evictionListener),
+        new CancelingEvictionListener(evictionListener),
         1,
         TimeUnit.MINUTES,
-        ses,
+        scheduledExecutorService,
         ticker) {
 
       @Override
       protected boolean isExpired(K key, CacheEntry value, long nowInMillis) {
-        return value.expireTime < nowInMillis;
+        // TODO what about refresh?
+        return value.getStatus() == CallStatus.SUCCEEDED && value.expireTime <= nowInMillis;
       }
     };
   }
@@ -110,14 +114,14 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
       return populateCache(key, helper).getValue();
     }
 
-    if (cacheEntry.status == CallStatus.PENDING) {
+    if (cacheEntry.getStatus() == CallStatus.PENDING) {
       return cacheEntry.getValue();
     }
 
     long now = ticker.nowInMillis();
     // check if entry is staled and fire async-refresh
     if (cacheEntry.staleTime <= now) {
-      if (!cacheEntry.refreshInitiated) {
+      if (!cacheEntry.hasPendingCall) {
         refresh(key, cacheEntry, helper);
       }
     }
@@ -137,30 +141,7 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
     // all the put is though this method, perform clean up
     final V future = rpcCall(key, helper);
     final CacheEntry cacheEntry = new CacheEntry(key, future, staledEntry);
-    future.addListener(
-        new Runnable() {
-          @Override
-          public void run() {
-            if (future.isCancelled()) {
-              lruCache.invalidate(key, EvictionType.ERROR);
-              return;
-            }
-
-            try {
-              Object unused = future.get();
-              // update cache's internal states when call is successfully finished
-              long nowInMillis = ticker.nowInMillis();
-              cacheEntry.expireTime = nowInMillis + maxAgeMillis;
-              cacheEntry.staleTime = nowInMillis + staleAgeMillis;
-              cacheEntry.status = CallStatus.FINISHED;
-            } catch (Exception e) {
-              // GO BACKOFF STATUS
-              // failed cache shouldn't be cached
-              // TODO(creamsoup) how to handle if anything waiting for this result???
-            }
-          }
-        },
-        executor);
+    cacheEntry.registerRefreshCall(future);
     lruCache.cache(key, cacheEntry);
     return cacheEntry;
   }
@@ -177,37 +158,63 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
    * </pre>
    */
   private void refresh(final K key, CacheEntry oldValue, Helper helper) {
-    if (oldValue.refreshInitiated) {
+    if (oldValue.hasPendingCall) {
       return;
     }
-    oldValue.refreshInitiated = true;
+    oldValue.hasPendingCall = true;
     populateCache(key, oldValue, helper);
   }
 
   /**
    * A CallStatus indicates the status of RPC call. It doesn't necessarily indicate the cache's
    * status.
+   *
+   * <p>Life cycle of states
+   *
+   * <pre>
+   *        created                       __
+   *           |                          \v
+   *           V
+   * (*1)-> PENDING  ----------------> BACKOFF
+   *  |        |                          |
+   *  |        V                          |
+   *  |->  SUCCEEDED   <-------------------
+   *  |        |                          |
+   *  |        V                          |
+   *  ---   staled (SUCCEEDED)            |
+   *           |                          |
+   *           V                          |
+   *        evicted   <--------------------
+   * *1) when Refresh is not finished, but the original entry is expired.
+   * </pre>
    */
   private enum CallStatus {
+    /**  There is no RLS request pending and the most recent RLS request succeeded. */
+    NO_REQUEST,
     /**
      * Current call is finished successfully, the cache entry can be in STALED or EXPIRED status.
      */
-    FINISHED,
+    SUCCEEDED,
     /**
      * Call is still on the fly, but it may currently serving staled value if it was replacing
      * staled entry.
      */
     PENDING,
+    /** Call is failed and we are in exponential backoff pending a potential retry. */
+    BACKOFF,
     /**
-     * Call is failed and we are in exponential backoff pending a potential retry.
+     * The latest backoff delay has elapsed but we are waiting for a new pick before attempting to
+     * retry the RLS request.
      */
-    BACKOFF
+    BACKOFF_EXPIRED
   }
 
   private final class CacheEntry {
+
     final K key;
+    // value is an ListenableFuture, we use listener to control pending call
     final V value;
-    boolean refreshInitiated = false;
+    boolean hasPendingCall = false;
 
     long expireTime;
     long staleTime;
@@ -231,6 +238,36 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
       // TTLs will be updated to actual value when the call is succeeded
       expireTime = ticker.nowInMillis() + callTimeoutMillis;
       staleTime = expireTime;
+      addRpcFutureCallback();
+    }
+
+    private void addRpcFutureCallback() {
+      // handle initial rpc completion
+      // it will be in pending status
+      //    -> SUCCEEDED if nothing bad happens
+      //    -> BACKOFF if fails
+      // removed will be handled in cleanup
+      value.addListener(new Runnable() {
+        @Override
+        public void run() {
+          if (value.isCancelled()) {
+            return;
+          }
+
+          try {
+            Object unused = value.get();
+            // update cache's internal states when call is successfully finished
+            long nowInMillis = ticker.nowInMillis();
+            expireTime = nowInMillis + maxAgeMillis;
+            staleTime = nowInMillis + staleAgeMillis;
+            setStatus(CallStatus.SUCCEEDED);
+          } catch (Exception e) {
+            // GO BACKOFF STATUS
+            // failed cache shouldn't be cached
+            // TODO(creamsoup) how to handle if anything waiting for this result???
+          }
+        }
+      }, executor);
     }
 
     /**
@@ -238,7 +275,7 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
      * old available cache entry, it can still returns previous value until previous value is
      * expired or new value is available.
      */
-    public V getValue() {
+    V getValue() {
       if (!value.isDone()
           && !value.isCancelled()
           && staledValue != null
@@ -247,18 +284,66 @@ abstract class AsyncRequestCache<K, V extends ListenableFuture> {
       }
       return value;
     }
+
+    CallStatus getStatus() {
+      // TODO handle when pending call and trasition case
+      return status;
+    }
+
+    void setStatus(CallStatus status) {
+      this.status = checkNotNull(status, "status");
+    }
+
+    void registerRefreshCall(final V callFuture) {
+      // this is handling refresh when the entry is stabled but yet valid and successful
+      //  -> it will be still succeeded until the previous entry is expired
+      //  -> it may enter PENDING if the previous entry is expired, but pending call is not finished
+      //  -> it may enter SUCCEEDED if the refresh call finished before prev expired
+      //  -> it may enter BACKOFF if the refresh call is failed and previous entry is expired
+      callFuture.addListener(new Runnable() {
+        @Override
+        public void run() {
+          if (callFuture.isCancelled()) {
+            // TODO Must check if staled is still valid or vice versa
+            lruCache.invalidate(key, EvictionType.ERROR);
+            return;
+          }
+
+          try {
+            Object unused = callFuture.get();
+            // update cache's internal states when call is successfully finished
+            long nowInMillis = ticker.nowInMillis();
+            expireTime = nowInMillis + maxAgeMillis;
+            staleTime = nowInMillis + staleAgeMillis;
+            setStatus(CallStatus.SUCCEEDED);
+          } catch (Exception e) {
+            // GO BACKOFF STATUS
+            // failed cache shouldn't be cached
+            // TODO(creamsoup) how to handle if anything waiting for this result???
+          }
+        }
+      }, executor);
+    }
+
+    void cleanup() {
+      // called when cache is evicted or replaced
+      // may need to cancel staled / curr
+
+    }
   }
 
-  private final class DelegatingEvictionListener implements EvictionListener<K, CacheEntry> {
+  private final class CancelingEvictionListener implements EvictionListener<K, CacheEntry> {
 
     private final EvictionListener<K, V> delegate;
 
-    public DelegatingEvictionListener(@Nullable EvictionListener<K, V> delegate) {
+    CancelingEvictionListener(@Nullable EvictionListener<K, V> delegate) {
       this.delegate = delegate;
     }
 
     @Override
     public void onEviction(K key, CacheEntry value, EvictionType cause) {
+      value.cleanup();
+
       if (delegate != null) {
         delegate.onEviction(key, value.getValue(), cause);
       }

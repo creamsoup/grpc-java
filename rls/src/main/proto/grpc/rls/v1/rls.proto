@@ -1,4 +1,4 @@
-// Copyright 2019 The gRPC Authors
+// Copyright 2020 The gRPC Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,24 +14,24 @@
 
 syntax = "proto3";
 
-package google.lookup.v1alpha1;
+package grpc.lookup.v1;
 
+option go_package = "google.golang.org/grpc/lookup/grpc_lookup_v1";
 option java_multiple_files = true;
-option java_package = "io.grpc.lookup.v1alpha1";
-option java_outer_classname = "RouteLookupServiceProto";
+option java_package = "io.grpc.lookup.v1";
+option java_outer_classname = "RlsProto";
 
 message RouteLookupRequest {
   // Full host name of the target server, e.g. firestore.googleapis.com.
   // Only set for gRPC requests; HTTP requests must use key_map explicitly.
   string server = 1;
-  // Full path of the request, e.g. service and method for gRPC; does not
-  // include any query component.
+  // Full path of the request, i.e. "/service/method".
   // Only set for gRPC requests; HTTP requests must use key_map explicitly.
   string path = 2;
   // Target type allows the client to specify what kind of target format it
   // would like from RLS to allow it to find the regional server, e.g. "grpc".
   string target_type = 3;
-  // Map of key values extracted via KeyBuilder for URL or gRPC request.
+  // Map of key values extracted via key builders for the gRPC or HTTP request.
   map<string, string> key_map = 4;
 }
 
@@ -39,19 +39,13 @@ message RouteLookupResponse {
   // Actual addressable entity to use for routing decision, using syntax
   // requested by the request target_type.
   string target = 1;
-  // Optional HTTP headers or gRPC metadata to add to the client request.
+  // Optional header value to pass along to AFE in the X-Google-RLS-Data header.
   // Cached with "target" and sent with all requests that match the request key.
-  // Allows the RLS to pass its work product to the final regional AFE.
-  message Header {
-    string header = 1;
-    string value = 2;
-  }
-  repeated Header headers = 2;
+  // Allows the RLS to pass its work product to the eventual target.
+  string header_data = 2;
 }
 
 service RouteLookupService {
-  // Lookup returns a target for a single key.  For now we provide a simple
-  // stubby service, but can add a bidi streaming version for performance
-  // if necessary when needed.
-  rpc RouteLookup(RouteLookupRequest) returns (RouteLookupResponse) {};
+  // Lookup returns a target for a single key.
+  rpc RouteLookup(RouteLookupRequest) returns (RouteLookupResponse) {}
 }

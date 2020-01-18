@@ -16,7 +16,6 @@
 
 package io.grpc.rls;
 
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
@@ -32,31 +31,15 @@ import javax.annotation.concurrent.Immutable;
 /** RlsProtoData is a collection of internal representation of RouteLookupService proto messages. */
 public final class RlsProtoData {
 
-  // TODO hide constructors and use builder / factory method
-
   @Immutable
   static final class RouteLookupRequest {
-    /**
-     * Full host name of the target server, e.g. firestore.googleapis.com. Only set for gRPC
-     * requests; HTTP requests must use key_map explicitly.
-     */
+
     private final String server;
 
-    /**
-     * Full path of the request, e.g. service and method for gRPC; does not include any query
-     * component. Only set for gRPC requests; HTTP requests must use key_map explicitly.
-     */
     private final String path;
 
-    /**
-     * Target type allows the client to specify what kind of target format it would like from RLS to
-     * allow it to find the regional server, e.g. "grpc".
-     */
     private final String targetType;
 
-    /**
-     * Map of key values extracted via KeyBuilder for URL or gRPC request.
-     */
     private final ImmutableMap<String, String> keyMap;
 
     public RouteLookupRequest(
@@ -67,18 +50,31 @@ public final class RlsProtoData {
       this.keyMap = ImmutableMap.copyOf(checkNotNull(keyMap, "keyMap"));
     }
 
+    /**
+     * Returns a full host name of the target server, {@literal e.g.} firestore.googleapis.com. Only
+     * set for gRPC requests; HTTP requests must use key_map explicitly.
+     */
     public String getServer() {
       return server;
     }
 
+    /**
+     * Returns a full path of the request, {@literal i.e.} "/service/method". Only set for gRPC
+     * requests; HTTP requests must use key_map explicitly.
+     */
     public String getPath() {
       return path;
     }
 
+    /**
+     * Returns the target type allows the client to specify what kind of target format it would like
+     * from RLS to allow it to find the regional server, {@literal e.g.} "grpc".
+     */
     public String getTargetType() {
       return targetType;
     }
 
+    /** Returns a map of key values extracted via key builders for the gRPC or HTTP request. */
     public ImmutableMap<String, String> getKeyMap() {
       return keyMap;
     }
@@ -116,32 +112,31 @@ public final class RlsProtoData {
 
   @Immutable
   static final class RouteLookupResponse {
-    /**
-     * Actual addressable entity to use for routing decision, using syntax requested by the request
-     * target_type.
-     */
-    String target;
 
-    /**
-     * Optional HTTP headers or gRPC metadata to add to the client request. Cached with "target" and
-     * sent with all requests that match the request key.Allows the RLS to pass its work product to
-     * the final regional AFE.
-     */
-    ImmutableList<String> headers;
+    private final String target;
 
-    public RouteLookupResponse(String target, List<String> headers) {
+    private final String headerData;
+
+    public RouteLookupResponse(String target, String headerData) {
       this.target = checkNotNull(target, "target");
-      checkNotNull(headers, "headers");
-      checkArgument(headers.size() % 2 == 0, "Invalid header size: %s", headers.size());
-      this.headers = ImmutableList.copyOf(headers);
+      this.headerData = checkNotNull(headerData, "headerData");
     }
 
+    /**
+     * Returns target. A target is an actual addressable entity to use for routing decision, using
+     * syntax requested by the request target_type.
+     */
     public String getTarget() {
       return target;
     }
 
-    public ImmutableList<String> getHeaders() {
-      return headers;
+    /**
+     * Returns optional header data to pass along to AFE in the X-Google-RLS-Data header. Cached
+     * with "target" and sent with all requests that match the request key. Allows the RLS to pass
+     * its work product to the eventual target.
+     */
+    public String getHeaderData() {
+      return headerData;
     }
 
     @Override
@@ -153,77 +148,46 @@ public final class RlsProtoData {
         return false;
       }
       RouteLookupResponse that = (RouteLookupResponse) o;
-      return Objects.equal(target, that.target) && Objects.equal(headers, that.headers);
+      return java.util.Objects.equals(target, that.target)
+          && java.util.Objects.equals(headerData, that.headerData);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hashCode(target, headers);
+      return java.util.Objects.hash(target, headerData);
     }
 
     @Override
     public String toString() {
       return MoreObjects.toStringHelper(this)
           .add("target", target)
-          .add("headers", headers)
+          .add("headerData", headerData)
           .toString();
     }
   }
 
+  /** A Config object for gRPC RouteLookupService. */
   @Immutable
   public static final class RouteLookupConfig {
 
     public static final long MAX_AGE_MILLIS = TimeUnit.MINUTES.toMillis(5);
 
-    /**
-     * Unordered specifications for constructing keys for gRPC requests.  All GrpcKeyBuilders on
-     * this list must have unique "name" fields so that the client is free to prebuild a hash map
-     * keyed by name.  If no GrpcKeyBuilder matches, an empty map will be sent to the lookup
-     * service; it should likely reply with a global default route and raise an alert.
-     */
     private final ImmutableList<GrpcKeyBuilder> grpcKeyBuilders;
 
-
-    /**
-     * The name of the lookup service as a gRPC URI.  Typically, this will be a subdomain of the
-     * target, such as "lookup.datastore.googleapis.com".
-     */
     private final String lookupService;
 
-    /** Configure a timeout value for lookup service requests. Required. */
     private final long lookupServiceTimeoutInMillis;
 
-    /**
-     * How long are responses valid for (like HTTP Cache-Control). If omitted (i.e. 0), responses
-     * are considered not to be cacheable. This value is clamped to 5 minutes to avoid unflushable
-     * bad responses.
-     */
     private final long maxAgeInMillis;
 
-    /**
-     * After a response has been in the client cache for this amount of time and is re-requested,
-     * start an asynchronous RPC to re-validate it. This value should be less than max_age by at
-     * least the length of a typical RTT to the Route Lookup Service to fully mask the RTT latency.
-     * If omitted, keys are only re-requested after they have expired.
-     */
     private final long staleAgeInMillis;
 
-    /**
-     * Rough indicator of amount of memory to use for the client cache, in bytes.  Some of the data
-     * structure overhead is not accounted for, so actual memory consumed will be somewhat greater
-     * than this value. If this field is omitted or set to zero, a client default will be used. The
-     * value may be capped to a lower amount based on client configuration.
-     */
-    private final long cacheSize;
+    private final long cacheSizeBytes;
 
-    /**
-     * This value provides a default target to use if needed.  It should not be defined if request
-     * processing strategy is SYNC_LOOKUP_CLIENT_SEES_ERROR. Note that requests can be routed only
-     * to a subdomain of the original target, e.g. "us_east_1.cloudbigtable.googleapis.com".
-     */
+    private final ImmutableList<String> validTargets;
+
     private final String defaultTarget;
 
-    /** Specify how to process a request when a mapping is not available. */
     private final RequestProcessingStrategy requestProcessingStrategy;
 
     public RouteLookupConfig(
@@ -232,7 +196,8 @@ public final class RlsProtoData {
         long lookupServiceTimeoutInMillis,
         long maxAgeInMillis,
         long staleAgeInMillis,
-        long cacheSize,
+        long cacheSizeBytes,
+        List<String> validTargets,
         String defaultTarget,
         RequestProcessingStrategy requestProcessingStrategy) {
       checkState(
@@ -243,7 +208,8 @@ public final class RlsProtoData {
       this.lookupServiceTimeoutInMillis = lookupServiceTimeoutInMillis;
       this.maxAgeInMillis = Math.min(maxAgeInMillis, MAX_AGE_MILLIS);
       this.staleAgeInMillis = Math.min(staleAgeInMillis, this.maxAgeInMillis);
-      this.cacheSize = cacheSize;
+      this.cacheSizeBytes = cacheSizeBytes;
+      this.validTargets = ImmutableList.copyOf(checkNotNull(validTargets, "validTargets"));
       this.defaultTarget = defaultTarget;
       this.requestProcessingStrategy = requestProcessingStrategy;
       checkState(
@@ -255,34 +221,76 @@ public final class RlsProtoData {
           requestProcessingStrategy);
     }
 
+    /**
+     * Returns unordered specifications for constructing keys for gRPC requests. All GrpcKeyBuilders
+     * on this list must have unique "name" fields so that the client is free to prebuild a hash map
+     * keyed by name. If no GrpcKeyBuilder matches, an empty key_map will be sent to the lookup
+     * service; it should likely reply with a global default route and raise an alert.
+     */
     public ImmutableList<GrpcKeyBuilder> getGrpcKeyBuilders() {
       return grpcKeyBuilders;
     }
 
+    /**
+     * Returns the name of the lookup service as a gRPC URI. Typically, this will be a subdomain of
+     * the target, such as "lookup.datastore.googleapis.com".
+     */
     public String getLookupService() {
       return lookupService;
     }
 
+    /** Returns the timeout value for lookup service requests. */
     public long getLookupServiceTimeoutInMillis() {
       return lookupServiceTimeoutInMillis;
     }
 
+
+    /** Returns the maximum age the result will be cached. */
     public long getMaxAgeInMillis() {
       return maxAgeInMillis;
     }
 
+    /**
+     * Returns the time when an entry will be in a staled status. When cache is accessed whgen the
+     * entry is in staled status, it will
+     */
     public long getStaleAgeInMillis() {
       return staleAgeInMillis;
     }
 
-    public long getCacheSize() {
-      return cacheSize;
+    /**
+     * Returns a rough indicator of amount of memory to use for the client cache. Some of the data
+     * structure overhead is not accounted for, so actual memory consumed will be somewhat greater
+     * than this value.  If this field is omitted or set to zero, a client default will be used.
+     * The value may be capped to a lower amount based on client configuration.
+     */
+    public long getCacheSizeBytes() {
+      return cacheSizeBytes;
     }
 
+    /**
+     * Returns the list of all the possible targets that can be returned by the lookup service.  If
+     * a target not on this list is returned, it will be treated the same as an RPC error from the
+     * RLS.
+     */
+    public ImmutableList<String> getValidTargets() {
+      return validTargets;
+    }
+
+    /**
+     * Returns the default target to use. It will be used for request processing strategy
+     * {@link RequestProcessingStrategy#SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR} if RLS
+     * returns an error, or strategy {@link
+     * RequestProcessingStrategy#ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS} if RLS returns an error or
+     * there is a cache miss in the client.  It will also be used if there are no healthy backends
+     * for an RLS target. Note that requests can be routed only to a subdomain of the original
+     * target, {@literal e.g.} "us_east_1.cloudbigtable.googleapis.com".
+     */
     public String getDefaultTarget() {
       return defaultTarget;
     }
 
+    /** Returns {@link RequestProcessingStrategy} to process RLS response. */
     public RequestProcessingStrategy getRequestProcessingStrategy() {
       return requestProcessingStrategy;
     }
@@ -299,7 +307,7 @@ public final class RlsProtoData {
       return lookupServiceTimeoutInMillis == that.lookupServiceTimeoutInMillis
           && maxAgeInMillis == that.maxAgeInMillis
           && staleAgeInMillis == that.staleAgeInMillis
-          && cacheSize == that.cacheSize
+          && cacheSizeBytes == that.cacheSizeBytes
           && Objects.equal(grpcKeyBuilders, that.grpcKeyBuilders)
           && Objects.equal(lookupService, that.lookupService)
           && Objects.equal(defaultTarget, that.defaultTarget)
@@ -314,7 +322,7 @@ public final class RlsProtoData {
           lookupServiceTimeoutInMillis,
           maxAgeInMillis,
           staleAgeInMillis,
-          cacheSize,
+          cacheSizeBytes,
           defaultTarget,
           requestProcessingStrategy);
     }
@@ -327,13 +335,14 @@ public final class RlsProtoData {
           .add("lookupServiceTimeoutInMillis", lookupServiceTimeoutInMillis)
           .add("maxAgeInMillis", maxAgeInMillis)
           .add("staleAgeInMillis", staleAgeInMillis)
-          .add("cacheSize", cacheSize)
+          .add("cacheSize", cacheSizeBytes)
           .add("defaultTarget", defaultTarget)
           .add("requestProcessingStrategy", requestProcessingStrategy)
           .toString();
     }
   }
 
+  /** A RequestProcessingStrategy specify how to process a request when not already in the cache. */
   enum RequestProcessingStrategy {
     /**
      * Query the RLS and process the request using target returned by the lookup. The target will
@@ -358,31 +367,39 @@ public final class RlsProtoData {
     ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS;
   }
 
+  /**
+   * A NameMatcher extract a key based on a given name (e.g. header name or query parameter name).
+   * The name must match one of the names listed in the "name" field. If the "required_match" field
+   * is true, one of the specified names must be present for the keybuilder to match.
+   */
   @Immutable
   static final class NameMatcher {
 
-    /** Ordered list of names; the first non-empty value will be used. */
+    private final String key;
+
     private final ImmutableList<String> names;
 
-    /**
-     * If true, make this extraction optional. A key builder will still match if no value is found.
-     * Note for gRPC keyBuilder it is treated as {@code true}.
-     */
     private final boolean optional;
 
-    NameMatcher(List<String> names) {
-      this(names, /* optional= */ true);
-    }
-
-    NameMatcher(List<String> names, boolean optional) {
+    NameMatcher(String key, List<String> names, boolean optional) {
+      this.key = checkNotNull(key, "key");
       this.names = ImmutableList.copyOf(checkNotNull(names, "names"));
       this.optional = optional;
     }
 
+    /** The name that will be used in the RLS key_map to refer to this value. */
+    public String getKey() {
+      return key;
+    }
+
+    /** Returns ordered list of names; the first non-empty value will be used. */
     public ImmutableList<String> names() {
       return names;
     }
 
+    /**
+     * Indicates if this extraction optional. A key builder will still match if no value is found.
+     */
     public boolean isOptional() {
       return optional;
     }
@@ -395,47 +412,54 @@ public final class RlsProtoData {
       if (o == null || getClass() != o.getClass()) {
         return false;
       }
-      NameMatcher that = (NameMatcher) o;
-      return optional == that.optional
-          && Objects.equal(names, that.names);
+      NameMatcher matcher = (NameMatcher) o;
+      return optional == matcher.optional
+          && java.util.Objects.equals(key, matcher.key)
+          && java.util.Objects.equals(names, matcher.names);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hashCode(names, optional);
+      return java.util.Objects.hash(key, names, optional);
     }
 
     @Override
     public String toString() {
       return MoreObjects.toStringHelper(this)
+          .add("key", key)
           .add("names", names)
           .add("optional", optional)
           .toString();
     }
   }
 
+  /** A GrpcKeyBuilder applies to a given gRPC service, name, and headers. */
   static final class GrpcKeyBuilder {
-    /**
-     * To match, one of the given Name fields must match; the service and method fields are
-     * specified as fixed strings.  The service name is required and includes the proto package
-     * name.  The method name may be omitted, in which case any method on the given service is
-     * matched.
-     */
+
     private final ImmutableList<Name> names;
 
-    /** All listed headers must match (or be optional). */
-    private final ImmutableMap<String, NameMatcher> headers;
+    private final ImmutableList<NameMatcher> headers;
 
-    public GrpcKeyBuilder(List<Name> names, Map<String, NameMatcher> headers) {
+    public GrpcKeyBuilder(List<Name> names, List<NameMatcher> headers) {
       this.names = ImmutableList.copyOf(checkNotNull(names, "names"));
-      this.headers = ImmutableMap.copyOf(checkNotNull(headers, "headers"));
+      this.headers = ImmutableList.copyOf(checkNotNull(headers, "headers"));
     }
 
+    /**
+     * Returns names. To match, one of the given Name fields must match; the service and method
+     * fields are specified as fixed strings. The service name is required and includes the proto
+     * package name. The method name may be omitted, in which case any method on the given service
+     * is matched.
+     */
     public ImmutableList<Name> getNames() {
       return names;
     }
 
-    public ImmutableMap<String, NameMatcher> getHeaders() {
+    /**
+     * Returns a list of NameMatchers for header. Extract keys from all listed headers. For gRPC, it
+     * is an error to specify "required_match" on the NameMatcher protos, and we ignore it if set.
+     */
+    public ImmutableList<NameMatcher> getHeaders() {
       return headers;
     }
 
@@ -448,8 +472,7 @@ public final class RlsProtoData {
         return false;
       }
       GrpcKeyBuilder that = (GrpcKeyBuilder) o;
-      return Objects.equal(names, that.names) && Objects
-          .equal(headers, that.headers);
+      return Objects.equal(names, that.names) && Objects.equal(headers, that.headers);
     }
 
     @Override
@@ -464,56 +487,64 @@ public final class RlsProtoData {
           .add("headers", headers)
           .toString();
     }
-  }
 
-  static final class Name {
-    private final String service;
-    private final String method;
+    /**
+     * A Name for method for given service. To match, one of the given Name fields must match; the
+     * service and method fields are specified as fixed strings. The service name is required and
+     * includes the proto package name. The method name may be omitted, in which case any method on
+     * the given service is matched.
+     */
+    static final class Name {
 
-    public Name(String service) {
-      this(service, "*");
-    }
+      private final String service;
 
-    public Name(String service, String method) {
-      checkState(
-          !checkNotNull(service, "service").isEmpty(),
-          "service must not be empty or null");
-      this.service = service;
-      this.method = method;
-    }
+      private final String method;
 
-    public String getService() {
-      return service;
-    }
-
-    public String getMethod() {
-      return method;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-      if (this == o) {
-        return true;
+      public Name(String service) {
+        this(service, "*");
       }
-      if (o == null || getClass() != o.getClass()) {
-        return false;
+
+      public Name(String service, String method) {
+        checkState(
+            !checkNotNull(service, "service").isEmpty(),
+            "service must not be empty or null");
+        this.service = service;
+        this.method = method;
       }
-      Name name = (Name) o;
-      return Objects.equal(service, name.service)
-          && Objects.equal(method, name.method);
-    }
 
-    @Override
-    public int hashCode() {
-      return Objects.hashCode(service, method);
-    }
+      public String getService() {
+        return service;
+      }
 
-    @Override
-    public String toString() {
-      return MoreObjects.toStringHelper(this)
-          .add("service", service)
-          .add("method", method)
-          .toString();
+      public String getMethod() {
+        return method;
+      }
+
+      @Override
+      public boolean equals(Object o) {
+        if (this == o) {
+          return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+          return false;
+        }
+        Name name = (Name) o;
+        return Objects.equal(service, name.service)
+            && Objects.equal(method, name.method);
+      }
+
+      @Override
+      public int hashCode() {
+        return Objects.hashCode(service, method);
+      }
+
+      @Override
+      public String toString() {
+        return MoreObjects.toStringHelper(this)
+            .add("service", service)
+            .add("method", method)
+            .toString();
+      }
     }
   }
 }

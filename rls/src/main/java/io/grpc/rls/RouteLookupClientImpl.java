@@ -26,8 +26,9 @@ import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.SettableFuture;
 import io.grpc.LoadBalancer.Helper;
 import io.grpc.ManagedChannel;
-import io.grpc.lookup.v1alpha1.RouteLookupServiceGrpc;
-import io.grpc.lookup.v1alpha1.RouteLookupServiceGrpc.RouteLookupServiceStub;
+import io.grpc.lookup.v1.RouteLookupServiceGrpc;
+import io.grpc.lookup.v1.RouteLookupServiceGrpc.RouteLookupServiceStub;
+import io.grpc.rls.AdaptiveThrottler.SystemTicker;
 import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.RlsProtoConverters.RouteLookupResponseConverter;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
@@ -46,9 +47,9 @@ final class RouteLookupClientImpl
     extends AsyncRequestCache<RouteLookupRequest, RouteLookupInfoImpl>
     implements RouteLookupClient {
 
-  private static final Converter<RouteLookupRequest, io.grpc.lookup.v1alpha1.RouteLookupRequest>
+  private static final Converter<RouteLookupRequest, io.grpc.lookup.v1.RouteLookupRequest>
       reqConverter = new RlsProtoConverters.RouteLookupRequestConverter().reverse();
-  private static final Converter<RouteLookupResponse, io.grpc.lookup.v1alpha1.RouteLookupResponse>
+  private static final Converter<RouteLookupResponse, io.grpc.lookup.v1.RouteLookupResponse>
       respConverter = new RouteLookupResponseConverter().reverse();
 
   private final Throttler throttler;
@@ -62,7 +63,9 @@ final class RouteLookupClientImpl
         builder.maxAgeMillis,
         builder.staleAgeMillis,
         builder.maxCacheSize,
-        builder.callTimeoutMillis);
+        builder.callTimeoutMillis,
+        new SystemTicker(),
+        null);
     this.throttler = builder.throttler;
     channel = builder.oobChannel;
     stub = RouteLookupServiceGrpc.newStub(channel);
@@ -81,10 +84,10 @@ final class RouteLookupClientImpl
     if (throttler.shouldThrottle()) {
       return RouteLookupInfoImpl.createThrottled(request);
     }
-    io.grpc.lookup.v1alpha1.RouteLookupRequest rlsRequest = reqConverter.convert(request);
-    stub.routeLookup(rlsRequest, new StreamObserver<io.grpc.lookup.v1alpha1.RouteLookupResponse>() {
+    io.grpc.lookup.v1.RouteLookupRequest rlsRequest = reqConverter.convert(request);
+    stub.routeLookup(rlsRequest, new StreamObserver<io.grpc.lookup.v1.RouteLookupResponse>() {
       @Override
-      public void onNext(io.grpc.lookup.v1alpha1.RouteLookupResponse value) {
+      public void onNext(io.grpc.lookup.v1.RouteLookupResponse value) {
         response.set(respConverter.reverse().convert(value));
       }
 

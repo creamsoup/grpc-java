@@ -20,7 +20,6 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 import static io.grpc.LoadBalancer.ATTR_LOAD_BALANCING_CONFIG;
 
-import com.google.common.collect.UnmodifiableIterator;
 import io.grpc.Attributes;
 import io.grpc.ConnectivityState;
 import io.grpc.ConnectivityStateInfo;
@@ -34,7 +33,6 @@ import io.grpc.LoadBalancer.ResolvedAddresses;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancer.SubchannelStateListener;
-import io.grpc.Metadata;
 import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
 import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
@@ -146,13 +144,14 @@ public class RlsPicker extends SubchannelPicker {
             childPolicyWrapper.setPicker(new SubchannelPicker() {
               @Override
               public PickResult pickSubchannel(PickSubchannelArgs args) {
-                UnmodifiableIterator<String> iter = rlsResponse.getHeaders().iterator();
-                while (iter.hasNext()) {
-                  String key = iter.next();
-                  String val = iter.next();
-                  args.getHeaders()
-                      .put(Metadata.Key.of(key, Metadata.ASCII_STRING_MARSHALLER), val);
-                }
+                String headerData = rlsResponse.getHeaderData();
+                //TODO fixme
+                // while (iter.hasNext()) {
+                //   String key = iter.next();
+                //   String val = iter.next();
+                //   args.getHeaders()
+                //       .put(Metadata.Key.of(key, Metadata.ASCII_STRING_MARSHALLER), val);
+                // }
                 return PickResult.withSubchannel(subChannel);
               }
             });

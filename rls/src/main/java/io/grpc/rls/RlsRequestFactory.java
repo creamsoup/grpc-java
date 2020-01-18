@@ -22,7 +22,7 @@ import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Table;
 import io.grpc.Metadata;
 import io.grpc.rls.RlsProtoData.GrpcKeyBuilder;
-import io.grpc.rls.RlsProtoData.Name;
+import io.grpc.rls.RlsProtoData.GrpcKeyBuilder.Name;
 import io.grpc.rls.RlsProtoData.NameMatcher;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
@@ -48,17 +48,15 @@ public final class RlsRequestFactory {
       RouteLookupConfig config) {
     Table<String, String, NameMatcher> table = HashBasedTable.create();
     for (GrpcKeyBuilder grpcKeyBuilder : config.getGrpcKeyBuilders()) {
-      for (Map.Entry<String, NameMatcher> entry : grpcKeyBuilder.getHeaders().entrySet()) {
-        String rlsRequestHeaderName = entry.getKey();
-        NameMatcher nameMatcher = entry.getValue();
+      for (NameMatcher nameMatcher : grpcKeyBuilder.getHeaders()) {
         List<String> requestHeaders = nameMatcher.names();
         for (Name name : grpcKeyBuilder.getNames()) {
           String method = name.getMethod().isEmpty() ? "*" : name.getMethod();
           String path = name.getService() + "/" + method;
           table.put(
               path,
-              rlsRequestHeaderName,
-              new NameMatcher(requestHeaders, /* optional= */ true));
+              nameMatcher.getKey(),
+              new NameMatcher(nameMatcher.getKey(), requestHeaders, /* optional= */ true));
         }
       }
     }
