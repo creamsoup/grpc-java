@@ -16,6 +16,7 @@
 
 package io.grpc.rls;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
@@ -48,15 +49,16 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
   private final Object lock = new Object();
 
   @GuardedBy("lock")
-  private final LinkedHashMap<K, V> delegate;
+  private final LinkedHashMap<K, SizedValue> delegate;
   private final PeriodicCleaner periodicCleaner;
   private final Ticker ticker;
-  private final EvictionListener<K, V> evictionListener;
-  private final int estimatedMaxSizeBytes;
-  private final AtomicLong estimatedSize = new AtomicLong();
+  private final EvictionListener<K, SizedValue> evictionListener;
+  private final AtomicLong estimatedSizeBytes = new AtomicLong();
+
+  private long estimatedMaxSizeBytes;
 
   public LinkedHashLruCache(
-      final int maxEstimatedSizeBytes,
+      final long maxEstimatedSizeBytes,
       @Nullable final EvictionListener<K, V> evictionListener,
       int cleaningInterval,
       TimeUnit cleaningIntervalUnit,
@@ -66,11 +68,14 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
     this.estimatedMaxSizeBytes = maxEstimatedSizeBytes;
     this.evictionListener = new SizeHandlingEvictionListener(evictionListener);
     this.ticker = checkNotNull(ticker, "ticker");
-    delegate = new LinkedHashMap<K, V>(
-        maxEstimatedSizeBytes, /* loadFactor= */ 0.75f, /* accessOrder= */ true) {
+    delegate = new LinkedHashMap<K, SizedValue>(
+        // rough estimate or minimum hashmap default
+        Math.max((int) (maxEstimatedSizeBytes / 1000), 16),
+        /* loadFactor= */ 0.75f,
+        /* accessOrder= */ true) {
       @Override
-      protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
-        if (size() <= maxEstimatedSizeBytes) {
+      protected boolean removeEldestEntry(Map.Entry<K, SizedValue> eldest) {
+        if (estimatedSizeBytes.get() <= LinkedHashLruCache.this.estimatedMaxSizeBytes) {
           return false;
         }
 
@@ -78,7 +83,7 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
         boolean removed = cleanupExpiredEntries(1, ticker.nowInMillis());
         // handles size based eviction if necessary
         boolean shouldRemove =
-            !removed && shouldInvalidateEldestEntry(eldest.getKey(), eldest.getValue());
+            !removed && shouldInvalidateEldestEntry(eldest.getKey(), eldest.getValue().value);
         if (shouldRemove) {
           // remove entry by us to make sure lruIterator and cache is in sync
           LinkedHashLruCache.this.invalidate(eldest.getKey(), EvictionType.SIZE);
@@ -107,10 +112,20 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
    * Returns estimated size of entry to keep track. If it always returns 1, the max size bytes
    * behaves like max number of entry (default behavior).
    */
-  // TODO(creamsoup) possibly store in the value with wrapper for tiny performance boost? for life
-  //  time, each entry can call this method twice in current impl.
   protected int estimateSizeOf(K key, V value) {
     return 1;
+  }
+
+  /** Updates size for given key if entry exists. It is useful if the cache value is mutated. */
+  public final void updateEntrySize(K key) {
+    SizedValue entry = readInternal(key);
+    if (entry == null) {
+      return;
+    }
+    int prevSize = entry.size;
+    int newSize = estimateSizeOf(key, entry.value);
+    entry.size = newSize;
+    estimatedSizeBytes.addAndGet(newSize - prevSize);
   }
 
   @Override
@@ -118,25 +133,36 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
   public final V cache(K key, V value) {
     checkNotNull(key, "key");
     checkNotNull(value, "value");
-    V existing;
+    SizedValue existing;
+    int size = estimateSizeOf(key, value);
     synchronized (lock) {
-      existing = delegate.put(key, value);
+      existing = delegate.put(key, new SizedValue(size, value));
       if (existing != null) {
         evictionListener.onEviction(key, existing, EvictionType.REPLACED);
       }
     }
-    estimatedSize.addAndGet(estimateSizeOf(key, value));
-    return existing;
+    estimatedSizeBytes.addAndGet(size);
+    return existing.value;
   }
 
   @Override
   @Nullable
   @CheckReturnValue
   public final V read(K key) {
+    SizedValue entry = readInternal(key);
+    if (entry != null) {
+      return entry.value;
+    }
+    return null;
+  }
+
+  @Nullable
+  @CheckReturnValue
+  private SizedValue readInternal(K key) {
     checkNotNull(key, "key");
     synchronized (lock) {
-      V existing = delegate.get(key);
-      if (existing != null && isExpired(key, existing, ticker.nowInMillis())) {
+      SizedValue existing = delegate.get(key);
+      if (existing != null && isExpired(key, existing.value, ticker.nowInMillis())) {
         invalidate(key, EvictionType.EXPIRED);
         return null;
       }
@@ -156,11 +182,11 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
     checkNotNull(key, "key");
     checkNotNull(cause, "cause");
     synchronized (lock) {
-      V existing = delegate.remove(key);
+      SizedValue existing = delegate.remove(key);
       if (existing != null) {
         evictionListener.onEviction(key, existing, cause);
       }
-      return existing;
+      return existing.value;
     }
   }
 
@@ -175,7 +201,7 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
     checkNotNull(cause, "cause");
     synchronized (lock) {
       for (K key : keys) {
-        V existing = delegate.remove(key);
+        SizedValue existing = delegate.remove(key);
         if (existing != null) {
           evictionListener.onEviction(key, existing, cause);
         }
@@ -187,29 +213,44 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
   @CheckReturnValue
   public final boolean hasCacheEntry(K key) {
     // call get to handle expired
-    return read(key) != null;
+    return readInternal(key) != null;
+  }
+
+  public final void resize(int newSize) {
+    long now = ticker.nowInMillis();
+    synchronized (lock) {
+      this.estimatedMaxSizeBytes = newSize;
+      Iterator<Map.Entry<K, SizedValue>> lruIter = delegate.entrySet().iterator();
+      while (lruIter.hasNext() && estimatedMaxSizeBytes > this.estimatedSizeBytes.get()) {
+        Map.Entry<K, SizedValue> entry = lruIter.next();
+        if (isExpired(entry.getKey(), entry.getValue().value, now)) {
+          lruIter.remove();
+          // eviction listener will update the estimatedSizeBytes
+          evictionListener.onEviction(entry.getKey(), entry.getValue(), EvictionType.EXPIRED);
+        }
+      }
+    }
   }
 
   @Override
   @CheckReturnValue
-  public final long estimatedSize() {
-    return estimatedSize.get();
+  public final int estimatedSize() {
+    return delegate.size();
   }
 
   private boolean cleanupExpiredEntries(long now) {
-    return cleanupExpiredEntries(0, now);
+    return cleanupExpiredEntries(delegate.size(), now);
   }
 
+  // limit is by number of entries
   private boolean cleanupExpiredEntries(int limit, long now) {
-    if (limit == 0) {
-      limit = estimatedMaxSizeBytes;
-    }
+    checkArgument(limit > 0, "limit must be positive");
     boolean removedAny = false;
     synchronized (lock) {
-      Iterator<Map.Entry<K, V>> lruIter = delegate.entrySet().iterator();
+      Iterator<Map.Entry<K, SizedValue>> lruIter = delegate.entrySet().iterator();
       while (lruIter.hasNext() && limit > 0) {
-        Map.Entry<K, V> entry = lruIter.next();
-        if (isExpired(entry.getKey(), entry.getValue(), now)) {
+        Map.Entry<K, SizedValue> entry = lruIter.next();
+        if (isExpired(entry.getKey(), entry.getValue().value, now)) {
           lruIter.remove();
           evictionListener.onEviction(entry.getKey(), entry.getValue(), EvictionType.EXPIRED);
           removedAny = true;
@@ -266,7 +307,7 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
   }
 
   /** A {@link EvictionListener} keeps track of size. */
-  private final class SizeHandlingEvictionListener implements EvictionListener<K, V> {
+  private final class SizeHandlingEvictionListener implements EvictionListener<K, SizedValue> {
 
     private final EvictionListener<K, V> delegate;
 
@@ -275,11 +316,21 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
     }
 
     @Override
-    public void onEviction(K key, V value, EvictionType cause) {
-      estimatedSize.addAndGet(-1 * estimateSizeOf(key, value));
+    public void onEviction(K key, SizedValue value, EvictionType cause) {
+      estimatedSizeBytes.addAndGet(-1 * estimateSizeOf(key, value.value));
       if (delegate != null) {
-        delegate.onEviction(key, value, cause);
+        delegate.onEviction(key, value.value, cause);
       }
+    }
+  }
+
+  private final class SizedValue {
+    volatile int size;
+    final V value;
+
+    SizedValue(int size, V value) {
+      this.size = size;
+      this.value = value;
     }
   }
 }

@@ -151,9 +151,25 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
       RouteLookupConfig routeLookupConfig = new RouteLookupConfigConverter()
           .convert(JsonUtil.getObject(rawLoadBalancingConfigPolicy, "routeLookupConfig"));
       LoadBalancingPolicy lbPolicy = new LoadBalancingPolicy(
+          routeLookupConfig,
           JsonUtil.getString(rawLoadBalancingConfigPolicy, "childPolicyConfigTargetFieldName"),
           JsonUtil.checkObjectList(
               checkNotNull(JsonUtil.getList(rawLoadBalancingConfigPolicy, "childPolicy"))));
+      for (String validTarget : routeLookupConfig.getValidTargets()) {
+        ConfigOrError childPolicyConfigOrError =
+            lbPolicy
+                .getEffectiveLbProvider()
+                .parseLoadBalancingPolicyConfig(lbPolicy.getEffectiveChildPolicy(validTarget));
+        if (childPolicyConfigOrError.getError() != null) {
+          return
+              ConfigOrError.fromError(
+                  childPolicyConfigOrError
+                      .getError()
+                      .augmentDescription(
+                          "failed to parse childPolicy for validTarget: " + validTarget));
+
+        }
+      }
       return ConfigOrError.fromConfig(new LbPolicyConfiguration(routeLookupConfig, lbPolicy));
     } catch (Exception e) {
       return ConfigOrError.fromError(

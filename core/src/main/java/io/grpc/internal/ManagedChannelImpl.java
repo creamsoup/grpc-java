@@ -965,7 +965,6 @@ final class ManagedChannelImpl extends ManagedChannel implements
         channelStateManager.notifyWhenStateChanged(callback, executor, source);
       }
     }
-
     syncContext.execute(new NotifyStateChanged());
   }
 

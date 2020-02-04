@@ -26,6 +26,7 @@ import io.grpc.LoadBalancer;
 import io.grpc.ManagedChannel;
 import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
+import io.grpc.rls.AdaptiveThrottler.SystemTicker;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import java.util.List;
 
@@ -34,7 +35,7 @@ class RlsLoadBalancer extends LoadBalancer {
 
   private final Helper helper;
   private LbPolicyConfiguration lbPolicyConfiguration;
-  private RouteLookupClient routeLookupClient; // this will be probably only used in the picker
+  private AsyncCachingRlsClient routeLookupClient;
   private RlsPicker picker;
   private ManagedChannel oobChannel;
   private AdaptiveThrottler throttler = AdaptiveThrottler.builder().build();
@@ -69,22 +70,26 @@ class RlsLoadBalancer extends LoadBalancer {
       if (oobChannel != null) {
         oobChannel.shutdown();
       }
+      //TODO authority should be same as the actual channel's authority
       oobChannel = helper.createOobChannel(addresses.get(0), rlsConfig.getLookupService());
       throttler = AdaptiveThrottler.builder().build();
     }
-    RouteLookupClientImpl client =
-        RouteLookupClientImpl.builder()
-            .setChannel(oobChannel)
-            .setThrottler(throttler)
-            //TODO just pass bigger object
-            .setCallTimeoutMillis(rlsConfig.getLookupServiceTimeoutInMillis())
-            .setTarget(rlsConfig.getLookupService())
-            .setMaxCacheSizeBytes(rlsConfig.getCacheSizeBytes())
-            .setMaxAgeMillis(rlsConfig.getMaxAgeInMillis())
-            .setStaleAgeMillis(rlsConfig.getStaleAgeInMillis())
-            .setExecutor(helper.getSynchronizationContext())
-            .build();
-    routeLookupClient.shutdown();
+    // only update the cache entry if the
+    AsyncCachingRlsClient client =
+        new AsyncCachingRlsClient(
+            oobChannel,
+            helper.getScheduledExecutorService(),
+            helper.getSynchronizationContext(),
+            rlsConfig.getMaxAgeInMillis(),
+            rlsConfig.getStaleAgeInMillis(),
+            rlsConfig.getCacheSizeBytes(),
+            rlsConfig.getLookupServiceTimeoutInMillis(),
+            new SystemTicker(),
+            throttler,
+            /* evictionListener= */ null);
+    if (routeLookupClient != null) {
+      routeLookupClient.close();
+    }
     routeLookupClient = client;
     this.lbPolicyConfiguration = lbPolicyConfiguration;
     helper.getChannelLogger()
@@ -92,6 +97,7 @@ class RlsLoadBalancer extends LoadBalancer {
     // rls picker will maintain connectivity status
     // TODO make sure some states are inherited from existing
     picker = new RlsPicker(lbPolicyConfiguration, client, helper);
+    helper.updateBalancingState(oobChannel.getState(false), picker);
   }
 
   @Override
@@ -114,7 +120,7 @@ class RlsLoadBalancer extends LoadBalancer {
       oobChannel.shutdown();
     }
     if (routeLookupClient != null) {
-      routeLookupClient.shutdown();
+      routeLookupClient.close();
     }
   }
 }

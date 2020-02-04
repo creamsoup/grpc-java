@@ -16,6 +16,7 @@
 
 package io.grpc.rls;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
@@ -25,6 +26,7 @@ import io.grpc.ConnectivityState;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.LoadBalancerRegistry;
+import io.grpc.internal.AtomicBackoff;
 import io.grpc.internal.ObjectPool;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import java.io.Closeable;
@@ -34,6 +36,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -69,14 +73,16 @@ final class LbPolicyConfiguration {
       this.target = target;
     }
 
-    public static ChildPolicyWrapper create(String target) {
+    public static ObjectPool<ChildPolicyWrapper> createOrGet(String target) {
       ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(target);
       if (existing != null) {
-        return existing.getObject();
+        return existing;
       }
       ChildPolicyWrapper childPolicyWrapper = new ChildPolicyWrapper(target);
-      childPolicyMap.put(target, RefCountedObjectPool.of(childPolicyWrapper));
-      return childPolicyWrapper;
+      RefCountedObjectPool<ChildPolicyWrapper> wrapper =
+          RefCountedObjectPool.of(childPolicyWrapper);
+      childPolicyMap.put(target, wrapper);
+      return wrapper;
     }
 
     public String getTarget() {
@@ -158,12 +164,21 @@ final class LbPolicyConfiguration {
   }
 
   static final class LoadBalancingPolicy {
-    private final String childPolicyConfigTargetFieldName;
+
+    private final RouteLookupConfig routeLookupConfig;
     private final Map<String, ?> effectiveChildPolicy;
     private final LoadBalancerProvider effectiveLbProvider;
+    private final String childPolicyConfigTargetFieldName;
+
+    // path to Currently pending RLS requests.
+    private final ConcurrentMap<String /* path */, PendingRlsRequest> pendingRequests
+        = new ConcurrentHashMap<>();
 
     public LoadBalancingPolicy(
-        String childPolicyConfigTargetFieldName, List<Map<String, ?>> childPolicies) {
+        RouteLookupConfig routeLookupConfig,
+        String childPolicyConfigTargetFieldName,
+        List<Map<String, ?>> childPolicies) {
+      this.routeLookupConfig = checkNotNull(routeLookupConfig, "routeLookupConfig");
       checkState(
           childPolicyConfigTargetFieldName != null && !childPolicyConfigTargetFieldName.isEmpty(),
           "childPolicyConfigTargetFieldName cannot be empty or null");
@@ -198,6 +213,9 @@ final class LbPolicyConfiguration {
     }
 
     public Map<String, ?> getEffectiveChildPolicy(String target) {
+      checkArgument(
+          routeLookupConfig.getValidTargets().contains(target),
+          "target(%s) must be present in RouteLookupConfig.validTargets", target);
       return effectiveChildPolicy;
     }
 
@@ -223,6 +241,12 @@ final class LbPolicyConfiguration {
     public int hashCode() {
       return Objects
           .hashCode(childPolicyConfigTargetFieldName, effectiveChildPolicy, effectiveLbProvider);
+    }
+
+    static class PendingRlsRequest {
+      // state for the pending RLS request (will be only pending)?????
+      // should it contain list of requests???
+      AtomicBackoff backoff; // backoff status (doesn't mean it is backoff status)
     }
   }
 
