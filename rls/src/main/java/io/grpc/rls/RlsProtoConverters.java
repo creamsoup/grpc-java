@@ -108,14 +108,14 @@ final class RlsProtoConverters {
       String lookupService = JsonUtil.getString(json, "lookupService");
       long timeout =
           TimeUnit.SECONDS.toMillis(
-              JsonUtil.getDouble(json, "lookupServiceTimeout").longValue());
+              JsonUtil.getNumber(json, "lookupServiceTimeout").longValue());
       long maxAge =
           TimeUnit.SECONDS.toMillis(
-              JsonUtil.getDouble(json, "maxAge").longValue());
+              JsonUtil.getNumber(json, "maxAge").longValue());
       long staleAge =
           TimeUnit.SECONDS.toMillis(
-              JsonUtil.getDouble(json, "staleAge").longValue());
-      long cacheSize = JsonUtil.getDouble(json, "cacheSizeBytes").longValue();
+              JsonUtil.getNumber(json, "staleAge").longValue());
+      long cacheSize = JsonUtil.getNumber(json, "cacheSizeBytes").longValue();
       List<String> validTargets = JsonUtil.checkStringList(JsonUtil.getList(json, "validTargets"));
           String defaultTarget = JsonUtil.getString(json, "defaultTarget");
       RequestProcessingStrategy strategy =

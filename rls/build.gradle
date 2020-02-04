@@ -26,8 +26,4 @@ dependencies {
             project(':grpc-core').sourceSets.test.output
 }
 
-application {
-  mainClassName = 'io.grpc.rls.KeyBuilderMapTest'
-}
-
 configureProtoCompilation()

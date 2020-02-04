@@ -20,10 +20,12 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.common.base.MoreObjects;
 import io.grpc.rls.AdaptiveThrottler.Ticker;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -136,13 +138,13 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
     SizedValue existing;
     int size = estimateSizeOf(key, value);
     synchronized (lock) {
+      estimatedSizeBytes.addAndGet(size);
       existing = delegate.put(key, new SizedValue(size, value));
       if (existing != null) {
         evictionListener.onEviction(key, existing, EvictionType.REPLACED);
       }
     }
-    estimatedSizeBytes.addAndGet(size);
-    return existing.value;
+    return existing == null ? null : existing.value;
   }
 
   @Override
@@ -235,11 +237,13 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
   @Override
   @CheckReturnValue
   public final int estimatedSize() {
-    return delegate.size();
+    synchronized (lock) {
+      return delegate.size();
+    }
   }
 
   private boolean cleanupExpiredEntries(long now) {
-    return cleanupExpiredEntries(delegate.size(), now);
+    return cleanupExpiredEntries(Integer.MAX_VALUE, now);
   }
 
   // limit is by number of entries
@@ -331,6 +335,31 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
     SizedValue(int size, V value) {
       this.size = size;
       this.value = value;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) {
+        return true;
+      }
+      if (o == null || getClass() != o.getClass()) {
+        return false;
+      }
+      SizedValue that = (SizedValue) o;
+      return Objects.equals(value, that.value);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(value);
+    }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("size", size)
+          .add("value", value)
+          .toString();
     }
   }
 }

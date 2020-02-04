@@ -32,89 +32,6 @@ import java.util.Map;
 
 public class RlsLoadBalancerProvider extends LoadBalancerProvider {
 
-  private static final String TEST_RLS_CONFIG = "{\n"
-      + "  \"routeLookupConfig\": {\n"
-      + "    \"grpcKeyBuilders\": [\n"
-      + "      {\n"
-      + "        \"names\": [\n"
-      + "          {\n"
-      + "            \"service\": \"service1\",\n"
-      + "            \"method\": \"create\"\n"
-      + "          }\n"
-      + "        ],\n"
-      + "        \"headers\": {\n"
-      + "          \"user\": {\n"
-      + "            \"names\": [\n"
-      + "              \"User\",\n"
-      + "              \"Parent\"\n"
-      + "            ],\n"
-      + "            \"optional\": false\n"
-      + "          },\n"
-      + "          \"id\": {\n"
-      + "            \"names\": [\n"
-      + "              \"X-Google-Id\"\n"
-      + "            ],\n"
-      + "            \"optional\": true\n"
-      + "          }\n"
-      + "        }\n"
-      + "      },\n"
-      + "      {\n"
-      + "        \"names\": [\n"
-      + "          {\n"
-      + "            \"service\": \"service1\",\n"
-      + "            \"method\": \"*\"\n"
-      + "          }\n"
-      + "        ],\n"
-      + "        \"headers\": {\n"
-      + "          \"user\": {\n"
-      + "            \"names\": [\n"
-      + "              \"User\",\n"
-      + "              \"Parent\"\n"
-      + "            ],\n"
-      + "            \"optional\": false\n"
-      + "          },\n"
-      + "          \"password\": {\n"
-      + "            \"names\": [\n"
-      + "              \"Password\"\n"
-      + "            ],\n"
-      + "            \"optional\": true\n"
-      + "          }\n"
-      + "        }\n"
-      + "      },\n"
-      + "      {\n"
-      + "        \"names\": [\n"
-      + "          {\n"
-      + "            \"service\": \"service3\",\n"
-      + "            \"method\": \"*\"\n"
-      + "          }\n"
-      + "        ],\n"
-      + "        \"headers\": {\n"
-      + "          \"user\": {\n"
-      + "            \"names\": [\n"
-      + "              \"User\",\n"
-      + "              \"Parent\"\n"
-      + "            ],\n"
-      + "            \"optional\": false\n"
-      + "          }\n"
-      + "        }\n"
-      + "      }\n"
-      + "    ],\n"
-      + "    \"lookupService\": \"service1\",\n"
-      + "    \"lookupServiceTimeout\": 2,\n"
-      + "    \"maxAge\": 300,\n"
-      + "    \"staleAge\": 240,\n"
-      + "    \"cacheSize\": 1000,\n"
-      + "    \"defaultTarget\": \"us_east_1.cloudbigtable.googleapis.com\",\n"
-      + "    \"requestProcessingStrategy\": \"ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS\"\n"
-      + "  },\n"
-      + "  \"childPolicy\": [\n"
-      + "    {\n"
-      + "      \"grpclb\": {}\n"
-      + "    }\n"
-      + "  ],\n"
-      + "  \"childPolicyConfigTargetFieldName\": \"target\"\n"
-      + "}";
-
   @Override
   public boolean isAvailable() {
     return true;
@@ -140,13 +57,6 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
   @Override
   @SuppressWarnings("unchecked") // for testing json
   public ConfigOrError parseLoadBalancingPolicyConfig(Map<String, ?> rawLoadBalancingConfigPolicy) {
-    try {
-      // TODO removeme and test with default service config
-      rawLoadBalancingConfigPolicy = (Map<String, ?>) JsonParser.parse(TEST_RLS_CONFIG);
-    } catch (IOException ex) {
-      throw new RuntimeException(ex);
-    }
-
     try {
       RouteLookupConfig routeLookupConfig = new RouteLookupConfigConverter()
           .convert(JsonUtil.getObject(rawLoadBalancingConfigPolicy, "routeLookupConfig"));
