@@ -22,12 +22,10 @@ import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
-import io.grpc.internal.JsonParser;
 import io.grpc.internal.JsonUtil;
 import io.grpc.rls.LbPolicyConfiguration.LoadBalancingPolicy;
 import io.grpc.rls.RlsProtoConverters.RouteLookupConfigConverter;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
-import java.io.IOException;
 import java.util.Map;
 
 public class RlsLoadBalancerProvider extends LoadBalancerProvider {
@@ -55,7 +53,6 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
   }
 
   @Override
-  @SuppressWarnings("unchecked") // for testing json
   public ConfigOrError parseLoadBalancingPolicyConfig(Map<String, ?> rawLoadBalancingConfigPolicy) {
     try {
       RouteLookupConfig routeLookupConfig = new RouteLookupConfigConverter()
@@ -82,6 +79,7 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
       }
       return ConfigOrError.fromConfig(new LbPolicyConfiguration(routeLookupConfig, lbPolicy));
     } catch (Exception e) {
+      e.printStackTrace();
       return ConfigOrError.fromError(
           Status.INVALID_ARGUMENT
               .withDescription("can't parse config: " + e.getMessage())

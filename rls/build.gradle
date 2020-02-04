@@ -14,6 +14,7 @@ dependencies {
             project(':grpc-core'),
             project(':grpc-protobuf'),
             project(':grpc-stub'),
+            project(':grpc-testing'),
             libraries.protobuf
     compile(libraries.protobuf_util) {
         // prefer 26.0-android from libraries instead of 20.0

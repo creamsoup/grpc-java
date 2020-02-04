@@ -46,15 +46,8 @@ class RlsLoadBalancer extends LoadBalancer {
 
   @Override
   public void handleResolvedAddresses(ResolvedAddresses resolvedAddresses) {
-    ConfigOrError lbConfigOrError =
-        (ConfigOrError) resolvedAddresses.getLoadBalancingPolicyConfig();
-    if (lbConfigOrError.getError() != null) {
-      //TODO(creamsoup) clarify with mark, probably using existing?
-      handleNameResolutionError(lbConfigOrError.getError());
-      return;
-    }
     LbPolicyConfiguration lbPolicyConfiguration =
-        (LbPolicyConfiguration) lbConfigOrError.getConfig();
+        (LbPolicyConfiguration) resolvedAddresses.getLoadBalancingPolicyConfig();
     if (!lbPolicyConfiguration.equals(this.lbPolicyConfiguration)) {
       applyServiceConfig(resolvedAddresses.getAddresses(), lbPolicyConfiguration);
     }
@@ -65,12 +58,14 @@ class RlsLoadBalancer extends LoadBalancer {
     checkArgument(!addresses.isEmpty(), "Requires at least one address for rls target");
 
     RouteLookupConfig rlsConfig = lbPolicyConfiguration.getRouteLookupConfig();
-    if (!this.lbPolicyConfiguration.getRouteLookupConfig().getLookupService().equals(
-        lbPolicyConfiguration.getRouteLookupConfig().getLookupService())) {
+    if (this.lbPolicyConfiguration == null
+        || !this.lbPolicyConfiguration.getRouteLookupConfig().getLookupService().equals(
+            lbPolicyConfiguration.getRouteLookupConfig().getLookupService())) {
       if (oobChannel != null) {
         oobChannel.shutdown();
       }
       //TODO authority should be same as the actual channel's authority
+      System.out.println("a: " + addresses.get(0) + " authority: " + rlsConfig.getLookupService());
       oobChannel = helper.createOobChannel(addresses.get(0), rlsConfig.getLookupService());
       throttler = AdaptiveThrottler.builder().build();
     }
