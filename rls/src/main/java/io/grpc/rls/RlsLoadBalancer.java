@@ -19,15 +19,17 @@ package io.grpc.rls;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.sun.jndi.toolkit.url.Uri;
 import io.grpc.ChannelLogger.ChannelLogLevel;
 import io.grpc.EquivalentAddressGroup;
 import io.grpc.ExperimentalApi;
 import io.grpc.LoadBalancer;
 import io.grpc.ManagedChannel;
-import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
-import io.grpc.rls.AdaptiveThrottler.SystemTicker;
+import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
+import java.net.MalformedURLException;
 import java.util.List;
 
 @ExperimentalApi("TODO")
@@ -36,9 +38,10 @@ class RlsLoadBalancer extends LoadBalancer {
   private final Helper helper;
   private LbPolicyConfiguration lbPolicyConfiguration;
   private AsyncCachingRlsClient routeLookupClient;
-  private RlsPicker picker;
   private ManagedChannel oobChannel;
   private AdaptiveThrottler throttler = AdaptiveThrottler.builder().build();
+  @VisibleForTesting
+  RlsPicker picker;
 
   RlsLoadBalancer(Helper helper) {
     this.helper = checkNotNull(helper, "helper");
@@ -49,14 +52,11 @@ class RlsLoadBalancer extends LoadBalancer {
     LbPolicyConfiguration lbPolicyConfiguration =
         (LbPolicyConfiguration) resolvedAddresses.getLoadBalancingPolicyConfig();
     if (!lbPolicyConfiguration.equals(this.lbPolicyConfiguration)) {
-      applyServiceConfig(resolvedAddresses.getAddresses(), lbPolicyConfiguration);
+      applyServiceConfig(lbPolicyConfiguration);
     }
   }
 
-  private void applyServiceConfig(
-      List<EquivalentAddressGroup> addresses, LbPolicyConfiguration lbPolicyConfiguration) {
-    checkArgument(!addresses.isEmpty(), "Requires at least one address for rls target");
-
+  private void applyServiceConfig(LbPolicyConfiguration lbPolicyConfiguration) {
     RouteLookupConfig rlsConfig = lbPolicyConfiguration.getRouteLookupConfig();
     if (this.lbPolicyConfiguration == null
         || !this.lbPolicyConfiguration.getRouteLookupConfig().getLookupService().equals(
@@ -65,23 +65,22 @@ class RlsLoadBalancer extends LoadBalancer {
         oobChannel.shutdown();
       }
       //TODO authority should be same as the actual channel's authority
-      System.out.println("a: " + addresses.get(0) + " authority: " + rlsConfig.getLookupService());
-      oobChannel = helper.createOobChannel(addresses.get(0), rlsConfig.getLookupService());
+      // oobChannel = helper.createOobChannel(rlsConfig.getLookupService(), rlsConfig.getLookupService());
+      oobChannel = NettyChannelBuilder.forTarget(rlsConfig.getLookupService()).overrideAuthority()
       throttler = AdaptiveThrottler.builder().build();
     }
     // only update the cache entry if the
     AsyncCachingRlsClient client =
-        new AsyncCachingRlsClient(
-            oobChannel,
-            helper.getScheduledExecutorService(),
-            helper.getSynchronizationContext(),
-            rlsConfig.getMaxAgeInMillis(),
-            rlsConfig.getStaleAgeInMillis(),
-            rlsConfig.getCacheSizeBytes(),
-            rlsConfig.getLookupServiceTimeoutInMillis(),
-            new SystemTicker(),
-            throttler,
-            /* evictionListener= */ null);
+        AsyncCachingRlsClient.newBuilder()
+        .setChannel(oobChannel)
+        .setScheduledExecutorService(helper.getScheduledExecutorService())
+        .setExecutor(helper.getSynchronizationContext())
+        .setMaxAgeMillis(rlsConfig.getMaxAgeInMillis())
+        .setStaleAgeMillis(rlsConfig.getStaleAgeInMillis())
+        .setMaxCacheSizeBytes(rlsConfig.getCacheSizeBytes())
+        .setCallTimeoutMillis(rlsConfig.getLookupServiceTimeoutInMillis())
+        .setThrottler(throttler)
+        .build();
     if (routeLookupClient != null) {
       routeLookupClient.close();
     }

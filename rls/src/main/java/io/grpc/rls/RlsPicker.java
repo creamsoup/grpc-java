@@ -72,7 +72,7 @@ public class RlsPicker extends SubchannelPicker {
 
   @Override
   public PickResult pickSubchannel(PickSubchannelArgs args) {
-    String target = args.getMethodDescriptor().getServiceName();
+    String target = args.getCallOptions().getAuthority();
     String path = args.getMethodDescriptor().getFullMethodName();
 
     RouteLookupRequest request = requestFactory.create(target, path, args.getHeaders());
@@ -173,7 +173,7 @@ public class RlsPicker extends SubchannelPicker {
 
   private Subchannel fallbackSubchannel;
   private String fallbackAddress;
-  private ConnectivityState fallbackChannelConnectivityState;
+  private ConnectivityState fallbackChannelConnectivityState = ConnectivityState.IDLE;
   private Status fallbackChannelStatus;
 
   /** Uses Subchannel connected to default target. */
@@ -184,11 +184,7 @@ public class RlsPicker extends SubchannelPicker {
         fallbackSubchannel.shutdown();
       }
       fallbackAddress = defaultTarget;
-      String[] addrs = defaultTarget.split(":", 2);
-      checkState(addrs.length == 2, "address expect to be host:port format");
-      String host = addrs[0];
-      int port = Integer.parseInt(addrs[1]);
-      InetSocketAddress targetSocketAddr = InetSocketAddress.createUnresolved(host, port);
+      InetSocketAddress targetSocketAddr = parseAddress(defaultTarget);
       fallbackSubchannel = helper.createSubchannel(
           CreateSubchannelArgs.newBuilder()
               .setAddresses(new EquivalentAddressGroup(targetSocketAddr))
@@ -215,6 +211,18 @@ public class RlsPicker extends SubchannelPicker {
         return PickResult.withSubchannel(fallbackSubchannel);
     }
     throw new AssertionError();
+  }
+
+  private InetSocketAddress parseAddress(String name) {
+    if (name.contains(":")) {
+      String[] addrs = name.split(":", 2);
+      checkState(addrs.length == 2, "address expect to be host:port format");
+      String host = addrs[0];
+      int port = Integer.parseInt(addrs[1]);
+      return InetSocketAddress.createUnresolved(host, port);
+    } else {
+      return InetSocketAddress.createUnresolved(name, 80);
+    }
   }
 
   public void propagateError(Status error) {

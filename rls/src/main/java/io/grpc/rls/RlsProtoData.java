@@ -32,7 +32,7 @@ import javax.annotation.concurrent.Immutable;
 public final class RlsProtoData {
 
   @Immutable
-  static final class RouteLookupRequest {
+  public static final class RouteLookupRequest {
 
     private final String server;
 
@@ -111,7 +111,7 @@ public final class RlsProtoData {
   }
 
   @Immutable
-  static final class RouteLookupResponse {
+  public static final class RouteLookupResponse {
 
     private final String target;
 

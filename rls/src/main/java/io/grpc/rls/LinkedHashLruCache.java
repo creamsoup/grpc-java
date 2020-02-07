@@ -188,7 +188,7 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
       if (existing != null) {
         evictionListener.onEviction(key, existing, cause);
       }
-      return existing.value;
+      return existing == null ? null : existing.value;
     }
   }
 

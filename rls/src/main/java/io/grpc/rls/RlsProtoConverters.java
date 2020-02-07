@@ -39,13 +39,13 @@ import java.util.concurrent.TimeUnit;
  * A RlsProtoConverters is a collection of {@link Converter} between RouteLookupService proto
  * messages to internal representation in {@link RlsProtoData}.
  */
-final class RlsProtoConverters {
+public final class RlsProtoConverters {
 
   /**
    * A RouteLookupRequestConverter converts between {@link RouteLookupRequest} and {@link
    * RlsProtoData.RouteLookupRequest}.
    */
-  static final class RouteLookupRequestConverter
+  public static final class RouteLookupRequestConverter
       extends Converter<RouteLookupRequest, RlsProtoData.RouteLookupRequest> {
 
     @Override
@@ -74,7 +74,7 @@ final class RlsProtoConverters {
    * A RouteLookupResponseConverter converts between {@link RouteLookupResponse} and {@link
    * RlsProtoData.RouteLookupResponse}.
    */
-  static final class RouteLookupResponseConverter
+  public static final class RouteLookupResponseConverter
       extends Converter<RouteLookupResponse, RlsProtoData.RouteLookupResponse> {
 
     @Override
@@ -95,7 +95,7 @@ final class RlsProtoConverters {
   }
 
   // This one will be from ServiceConfig (json)
-  static final class RouteLookupConfigConverter
+  public static final class RouteLookupConfigConverter
       extends Converter<Map<String, ?>, RouteLookupConfig> {
 
     @Override

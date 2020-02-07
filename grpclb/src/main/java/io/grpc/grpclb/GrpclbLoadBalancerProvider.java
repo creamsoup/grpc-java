@@ -39,6 +39,7 @@ import javax.annotation.Nullable;
 @Internal
 public final class GrpclbLoadBalancerProvider extends LoadBalancerProvider {
   private static final Mode DEFAULT_MODE = Mode.ROUND_ROBIN;
+  static final String SERVICE_CONFIG_TARGET_NAME = "targetName";
 
   @Override
   public boolean isAvailable() {
@@ -78,28 +79,33 @@ public final class GrpclbLoadBalancerProvider extends LoadBalancerProvider {
   ConfigOrError parseLoadBalancingConfigPolicyInternal(
       Map<String, ?> rawLoadBalancingPolicyConfig) {
     if (rawLoadBalancingPolicyConfig == null) {
-      return ConfigOrError.fromConfig(DEFAULT_MODE);
+      return ConfigOrError.fromConfig(GrpclbConfig.create(DEFAULT_MODE));
     }
-    String childPolicyConfigTargetFieldName =
-        (String) rawLoadBalancingPolicyConfig.get("child_policy_config_target_field_name");
+    Object rawTarget =
+        rawLoadBalancingPolicyConfig.get(GrpclbLoadBalancerProvider.SERVICE_CONFIG_TARGET_NAME);
+    String target = null;
+    if (rawTarget instanceof String) {
+      target = (String) rawTarget;
+    }
     List<?> rawChildPolicies = getList(rawLoadBalancingPolicyConfig, "childPolicy");
     if (rawChildPolicies == null) {
-      return ConfigOrError.fromConfig(DEFAULT_MODE);
+      return ConfigOrError.fromConfig(GrpclbConfig.create(DEFAULT_MODE, target));
     }
+
     List<LbConfig> childPolicies =
         ServiceConfigUtil.unwrapLoadBalancingConfigList(checkObjectList(rawChildPolicies));
     for (LbConfig childPolicy : childPolicies) {
       String childPolicyName = childPolicy.getPolicyName();
       switch (childPolicyName) {
         case "round_robin":
-          return ConfigOrError.fromConfig(Mode.ROUND_ROBIN);
+          return ConfigOrError.fromConfig(GrpclbConfig.create(Mode.ROUND_ROBIN, target));
         case "pick_first":
-          return ConfigOrError.fromConfig(Mode.PICK_FIRST);
+          return ConfigOrError.fromConfig(GrpclbConfig.create(Mode.PICK_FIRST, target));
         default:
           // TODO(zhangkun83): maybe log?
       }
     }
-    return ConfigOrError.fromConfig(DEFAULT_MODE);
+    return ConfigOrError.fromConfig(GrpclbConfig.create(DEFAULT_MODE, target));
   }
 
   /**

@@ -57,7 +57,7 @@ class GrpclbLoadBalancer extends LoadBalancer {
   private final SubchannelPool subchannelPool;
   private final BackoffPolicy.Provider backoffPolicyProvider;
 
-  private Mode mode = Mode.ROUND_ROBIN;
+  private GrpclbConfig config = GrpclbConfig.create(Mode.ROUND_ROBIN);
 
   // All mutable states in this class are mutated ONLY from Channel Executor
   @Nullable
@@ -115,10 +115,10 @@ class GrpclbLoadBalancer extends LoadBalancer {
     List<EquivalentAddressGroup> newBackendServers =
         Collections.unmodifiableList(resolvedAddresses.getAddresses());
     Map<String, ?> rawLbConfigValue = attributes.get(ATTR_LOAD_BALANCING_CONFIG);
-    Mode newMode = retrieveModeFromLbConfig(rawLbConfigValue, helper.getChannelLogger());
-    if (!mode.equals(newMode)) {
-      mode = newMode;
-      helper.getChannelLogger().log(ChannelLogLevel.INFO, "Mode: " + newMode);
+    GrpclbConfig newConfig  = retrieveGrpcLbConfig(rawLbConfigValue, helper.getChannelLogger());
+    if (!config.equals(newConfig)) {
+      config = newConfig;
+      helper.getChannelLogger().log(ChannelLogLevel.INFO, "Config: " + newConfig);
       recreateStates();
     }
     grpclbState.handleAddresses(newLbAddressGroups, newBackendServers);
@@ -132,15 +132,26 @@ class GrpclbLoadBalancer extends LoadBalancer {
   }
 
   @VisibleForTesting
-  static Mode retrieveModeFromLbConfig(
+  static GrpclbConfig retrieveGrpcLbConfig(
       @Nullable Map<String, ?> rawLbConfigValue, ChannelLogger channelLogger) {
+    if (rawLbConfigValue == null) {
+      return GrpclbConfig.create(DEFAULT_MODE);
+    }
+
+    Object rawTarget = rawLbConfigValue.get(GrpclbLoadBalancerProvider.SERVICE_CONFIG_TARGET_NAME);
+    String target = null;
+    if (rawTarget == null || rawTarget instanceof String) {
+      target = (String) rawTarget;
+    } else {
+      channelLogger.log(
+          ChannelLogLevel.WARNING,
+          "Invalid targetName value type: %s, ignoring it",
+          rawTarget.getClass());
+    }
     try {
-      if (rawLbConfigValue == null) {
-        return DEFAULT_MODE;
-      }
       List<?> rawChildPolicies = getList(rawLbConfigValue, "childPolicy");
       if (rawChildPolicies == null) {
-        return DEFAULT_MODE;
+        return GrpclbConfig.create(DEFAULT_MODE, target);
       }
       List<LbConfig> childPolicies =
           ServiceConfigUtil.unwrapLoadBalancingConfigList(checkObjectList(rawChildPolicies));
@@ -148,9 +159,9 @@ class GrpclbLoadBalancer extends LoadBalancer {
         String childPolicyName = childPolicy.getPolicyName();
         switch (childPolicyName) {
           case "round_robin":
-            return Mode.ROUND_ROBIN;
+            return GrpclbConfig.create(Mode.ROUND_ROBIN, target);
           case "pick_first":
-            return Mode.PICK_FIRST;
+            return GrpclbConfig.create(Mode.PICK_FIRST, target);
           default:
             channelLogger.log(
                 ChannelLogLevel.DEBUG,
@@ -162,7 +173,7 @@ class GrpclbLoadBalancer extends LoadBalancer {
       logger.log(
           Level.WARNING, "Bad grpclb config: " + rawLbConfigValue + ", using " + DEFAULT_MODE, e);
     }
-    return DEFAULT_MODE;
+    return GrpclbConfig.create(DEFAULT_MODE, target);
   }
 
   private void resetStates() {
@@ -177,7 +188,7 @@ class GrpclbLoadBalancer extends LoadBalancer {
     checkState(grpclbState == null, "Should've been cleared");
     // TODO(jihuncho) instead of passing the helper, consider passing the target_name.
     grpclbState = new GrpclbState(
-        mode, helper, subchannelPool, time, stopwatch, backoffPolicyProvider);
+        config, helper, subchannelPool, time, stopwatch, backoffPolicyProvider);
   }
 
   @Override
