@@ -70,7 +70,7 @@ public class RlsRequestFactoryTest {
     metadata.put(Metadata.Key.of("X-Google-Id", Metadata.ASCII_STRING_MARSHALLER), "123");
     metadata.put(Metadata.Key.of("foo", Metadata.ASCII_STRING_MARSHALLER), "bar");
 
-    RouteLookupRequest request = factory.create("foo.com", "/service1/create", metadata);
+    RouteLookupRequest request = factory.create("foo.com", "service1/create", metadata);
 
     assertThat(request.getTargetType()).isEqualTo("grpc");
     assertThat(request.getPath()).isEqualTo("service1/create");

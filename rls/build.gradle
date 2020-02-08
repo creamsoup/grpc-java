@@ -29,3 +29,7 @@ dependencies {
 }
 
 configureProtoCompilation()
+
+application {
+    mainClassName = project.hasProperty("mainClass") ? getProperty("mainClass") : "NULL"
+}

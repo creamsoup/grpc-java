@@ -51,7 +51,6 @@ public class Backend {
           responseObserver.onCompleted();
         }
       }, rand, TimeUnit.MILLISECONDS);
-
     }
   }
 }

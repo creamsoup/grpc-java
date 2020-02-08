@@ -16,21 +16,16 @@
 
 package io.grpc.rls;
 
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.sun.jndi.toolkit.url.Uri;
 import io.grpc.ChannelLogger.ChannelLogLevel;
-import io.grpc.EquivalentAddressGroup;
 import io.grpc.ExperimentalApi;
 import io.grpc.LoadBalancer;
 import io.grpc.ManagedChannel;
+import io.grpc.ManagedChannelBuilder;
 import io.grpc.Status;
-import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
-import java.net.MalformedURLException;
-import java.util.List;
 
 @ExperimentalApi("TODO")
 class RlsLoadBalancer extends LoadBalancer {
@@ -44,11 +39,13 @@ class RlsLoadBalancer extends LoadBalancer {
   RlsPicker picker;
 
   RlsLoadBalancer(Helper helper) {
+    System.out.println("creating new RLSLB");
     this.helper = checkNotNull(helper, "helper");
   }
 
   @Override
   public void handleResolvedAddresses(ResolvedAddresses resolvedAddresses) {
+    System.out.println("handle: " + resolvedAddresses);
     LbPolicyConfiguration lbPolicyConfiguration =
         (LbPolicyConfiguration) resolvedAddresses.getLoadBalancingPolicyConfig();
     if (!lbPolicyConfiguration.equals(this.lbPolicyConfiguration)) {
@@ -58,29 +55,40 @@ class RlsLoadBalancer extends LoadBalancer {
 
   private void applyServiceConfig(LbPolicyConfiguration lbPolicyConfiguration) {
     RouteLookupConfig rlsConfig = lbPolicyConfiguration.getRouteLookupConfig();
+    System.out.println("apply rlsConfig: " + rlsConfig);
     if (this.lbPolicyConfiguration == null
         || !this.lbPolicyConfiguration.getRouteLookupConfig().getLookupService().equals(
-            lbPolicyConfiguration.getRouteLookupConfig().getLookupService())) {
+        lbPolicyConfiguration.getRouteLookupConfig().getLookupService())) {
       if (oobChannel != null) {
         oobChannel.shutdown();
       }
-      //TODO authority should be same as the actual channel's authority
-      // oobChannel = helper.createOobChannel(rlsConfig.getLookupService(), rlsConfig.getLookupService());
-      oobChannel = NettyChannelBuilder.forTarget(rlsConfig.getLookupService()).overrideAuthority()
+      System.out.println("oobChannel: connecting to " + rlsConfig.getLookupService());
+      oobChannel =
+          ManagedChannelBuilder
+              .forTarget(rlsConfig.getLookupService())
+              //TODO use parent's setting
+              .usePlaintext()
+              //TODO authority should be same as the actual channel, somehow pass to here
+//              .overrideAuthority()
+          .build();
       throttler = AdaptiveThrottler.builder().build();
     }
     // only update the cache entry if the
+    System.out.println("creating async cached client");
     AsyncCachingRlsClient client =
         AsyncCachingRlsClient.newBuilder()
-        .setChannel(oobChannel)
-        .setScheduledExecutorService(helper.getScheduledExecutorService())
-        .setExecutor(helper.getSynchronizationContext())
-        .setMaxAgeMillis(rlsConfig.getMaxAgeInMillis())
-        .setStaleAgeMillis(rlsConfig.getStaleAgeInMillis())
-        .setMaxCacheSizeBytes(rlsConfig.getCacheSizeBytes())
-        .setCallTimeoutMillis(rlsConfig.getLookupServiceTimeoutInMillis())
-        .setThrottler(throttler)
-        .build();
+            .setChannel(oobChannel)
+            .setScheduledExecutorService(helper.getScheduledExecutorService())
+            .setExecutor(helper.getSynchronizationContext())
+            .setMaxAgeMillis(rlsConfig.getMaxAgeInMillis())
+            .setStaleAgeMillis(rlsConfig.getStaleAgeInMillis())
+            .setMaxCacheSizeBytes(rlsConfig.getCacheSizeBytes())
+            .setCallTimeoutMillis(rlsConfig.getLookupServiceTimeoutInMillis())
+            .setThrottler(throttler)
+            .setHelper(helper)
+            .setLbPolicyConfig(lbPolicyConfiguration)
+            .build();
+    System.out.println("client created");
     if (routeLookupClient != null) {
       routeLookupClient.close();
     }
@@ -91,6 +99,7 @@ class RlsLoadBalancer extends LoadBalancer {
     // rls picker will maintain connectivity status
     // TODO make sure some states are inherited from existing
     picker = new RlsPicker(lbPolicyConfiguration, client, helper);
+    System.out.println("updating balancer state: " + oobChannel.getState(false));
     helper.updateBalancingState(oobChannel.getState(false), picker);
   }
 

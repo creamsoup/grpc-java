@@ -23,6 +23,9 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import io.grpc.ConnectivityState;
+import io.grpc.LoadBalancer.PickResult;
+import io.grpc.LoadBalancer.PickSubchannelArgs;
+import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.LoadBalancerRegistry;
@@ -67,7 +70,8 @@ final class LbPolicyConfiguration {
     private final String target;
     private LoadBalancingPolicy childPolicy;
     private ConnectivityState connectivityState;
-    private SubchannelPicker picker;
+    private Subchannel subchannel;
+    private SubchannelPicker picker = new PendingPicker();
 
     private ChildPolicyWrapper(String target) {
       this.target = target;
@@ -101,16 +105,22 @@ final class LbPolicyConfiguration {
       return connectivityState;
     }
 
+    public void setSubchannel(Subchannel subchannel) {
+      this.subchannel = checkNotNull(subchannel, "subchannel");
+    }
+
     public void setConnectivityState(ConnectivityState connectivityState) {
+      System.out.println("connectivity changed");
       this.connectivityState = connectivityState;
+      if (connectivityState == ConnectivityState.READY) {
+        checkState(subchannel != null, "???");
+        System.out.println("setting ReadyPicker");
+        picker = new ReadyPicker(subchannel);
+      }
     }
 
     public SubchannelPicker getPicker() {
       return picker;
-    }
-
-    public void setPicker(SubchannelPicker picker) {
-      this.picker = picker;
     }
 
     public ChildPolicyWrapper acquire() {
@@ -160,6 +170,29 @@ final class LbPolicyConfiguration {
           .add("connectivityState", connectivityState)
           .add("picker", picker)
           .toString();
+    }
+
+    private static final class PendingPicker extends SubchannelPicker {
+
+      @Override
+      public PickResult pickSubchannel(PickSubchannelArgs args) {
+        return PickResult.withNoResult();
+      }
+    }
+
+    private static final class ReadyPicker extends SubchannelPicker {
+
+      private final Subchannel subchannel;
+
+      public ReadyPicker(Subchannel subchannel) {
+        super();
+        this.subchannel = subchannel;
+      }
+
+      @Override
+      public PickResult pickSubchannel(PickSubchannelArgs args) {
+        return PickResult.withSubchannel(subchannel);
+      }
     }
   }
 

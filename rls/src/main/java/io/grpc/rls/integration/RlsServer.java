@@ -43,16 +43,18 @@ public class RlsServer {
     }
 
     @Override
-    public void routeLookup(RouteLookupRequest request,
+    public void routeLookup(final RouteLookupRequest request,
         final StreamObserver<RouteLookupResponse> responseObserver) {
       final CacheRequest value = cache.get(request);
       if (value == null) {
+        System.out.println("value not found for " + request);
         responseObserver.onError(new RuntimeException("not found"));
       } else {
         ses.schedule(
             new Runnable() {
               @Override
               public void run() {
+                System.out.println("request: " + request + "  response: " + request);
                 responseObserver.onNext(value.getResponse());
                 responseObserver.onCompleted();
               }

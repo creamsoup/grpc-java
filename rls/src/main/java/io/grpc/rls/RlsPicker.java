@@ -68,78 +68,31 @@ public class RlsPicker extends SubchannelPicker {
     this.helper = helper;
     this.requestFactory = new RlsRequestFactory(lbPolicyConfiguration.getRouteLookupConfig());
     this.strategy = lbPolicyConfiguration.getRouteLookupConfig().getRequestProcessingStrategy();
+    System.out.println("rls picker created");
   }
 
   @Override
   public PickResult pickSubchannel(PickSubchannelArgs args) {
-    String target = args.getCallOptions().getAuthority();
+    System.out.println("pick subchannel : " + args);
+    //TODO somehow get the authority
+//    String target = args.getCallOptions().getAuthority();
+    String target = "localhost";
     String path = args.getMethodDescriptor().getFullMethodName();
 
     RouteLookupRequest request = requestFactory.create(target, path, args.getHeaders());
+    System.out.println("request: " + request);
     final CachedResponse response = rlsClient.get(request);
+    System.out.println("response: " + response);
 
     if (response.hasValidData()) {
-      final ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
-      if (childPolicyWrapper.getPicker() != null) {
-        // cache hit with existing data
-        return childPolicyWrapper.getPicker().pickSubchannel(args);
-      }
-      // Cache hit but first time using it.
-      Helper childHelper = helper;
-      LoadBalancingPolicy childPolicy = childPolicyWrapper.getChildPolicy();
-      LoadBalancerProvider lbProvider = childPolicy.getEffectiveLbProvider();
-      LoadBalancer childLb = lbProvider.newLoadBalancer(childHelper);
-      Map<String, ?> childPolicyConfig = childPolicy.getEffectiveChildPolicy(target);
-      ConfigOrError parsedChildLbPolicy =
-          lbProvider.parseLoadBalancingPolicyConfig(childPolicyConfig);
-      checkState(
-          parsedChildLbPolicy.getError() == null,
-          "invalid child policy: %s",
-          childPolicyConfig);
-      childLb.handleResolvedAddresses(
-          ResolvedAddresses.newBuilder()
-              .setLoadBalancingPolicyConfig(parsedChildLbPolicy.getConfig())
-              .setAttributes(Attributes.newBuilder()
-                  .set(ATTR_LOAD_BALANCING_CONFIG, childPolicyConfig)
-                  .build())
-              .build());
-      childLb.requestConnection();
-      final Subchannel subChannel =
-          helper.createSubchannel(CreateSubchannelArgs.newBuilder().build());
-      childPolicyWrapper.setPicker(new SubchannelPicker() {
-        @Override
-        public PickResult pickSubchannel(PickSubchannelArgs args) {
-          String headerData = response.getHeaderData();
-          if (headerData != null || !headerData.isEmpty()) {
-            //TODO verify this works or not
-            args.getHeaders().put(RLS_DATA_KEY, headerData);
-          }
-          return PickResult.withSubchannel(subChannel);
-        }
-      });
-
-      subChannel.start(new SubchannelStateListener() {
-        @Override
-        public void onSubchannelState(ConnectivityStateInfo newState) {
-          childPolicyWrapper.setConnectivityState(newState.getState());
-          if (newState.getState() == ConnectivityState.TRANSIENT_FAILURE
-              || newState.getState() == ConnectivityState.SHUTDOWN) {
-            // handle subchannel shutdown
-            childPolicyWrapper.release();
-          }
-        }
-      });
-      subChannel.requestConnection();
-      subChannel.start(new SubchannelStateListener() {
-        @Override
-        public void onSubchannelState(ConnectivityStateInfo newState) {
-          childPolicyWrapper.setConnectivityState(newState.getState());
-        }
-      });
+      System.out.println("woohoo has valid data!");
+      ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
       return childPolicyWrapper.getPicker().pickSubchannel(args);
     } else if (response.hasError()) {
+      System.out.println("error");
       return handleError(response.getStatus());
     } else {
+      System.out.println("pending");
       // pending request
       return handlePendingRequest(args);
     }

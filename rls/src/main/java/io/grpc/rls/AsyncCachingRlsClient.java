@@ -22,12 +22,18 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Converter;
 import com.google.common.base.MoreObjects;
+import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
+import io.grpc.ConnectivityStateInfo;
+import io.grpc.EquivalentAddressGroup;
+import io.grpc.LoadBalancer.CreateSubchannelArgs;
+import io.grpc.LoadBalancer.Helper;
+import io.grpc.LoadBalancer.Subchannel;
+import io.grpc.LoadBalancer.SubchannelStateListener;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.internal.AtomicBackoff;
-import io.grpc.internal.AtomicBackoff.State;
 import io.grpc.internal.ObjectPool;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc.RouteLookupServiceStub;
@@ -41,6 +47,8 @@ import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import io.grpc.rls.RlsProtoData.RouteLookupResponse;
 import io.grpc.rls.Throttler.ThrottledException;
 import io.grpc.stub.StreamObserver;
+import java.net.InetSocketAddress;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -89,6 +97,8 @@ final class AsyncCachingRlsClient {
   private final long maxSizeBytes;
   private final long initialBackoffTimeMillis;
   private final long backoffExpirationTimeMillis;
+  private final Helper helper;
+  private final LbPolicyConfiguration lbPolicyConfig;
 
   // TODO: possibly have a sorted map of expire entry to proactively cleanup.
 
@@ -139,6 +149,8 @@ final class AsyncCachingRlsClient {
       }
     };
     this.pendingCallCache = new HashMap<>();
+    this.helper = checkNotNull(builder.helper, "helper");
+    this.lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
   }
 
   /** Returns a Builder for {@link AsyncCachingRlsClient}. */
@@ -317,19 +329,21 @@ final class AsyncCachingRlsClient {
 
     PendingCacheEntry(
         RouteLookupRequest request, ListenableFuture<RouteLookupResponse> pendingCall) {
-      this(
-          request,
-          pendingCall,
-          new AtomicBackoff("rls:" + request.getServer(), initialBackoffTimeMillis));
+      this(request, pendingCall, null);
     }
 
     PendingCacheEntry(
         RouteLookupRequest request,
         ListenableFuture<RouteLookupResponse> pendingCall,
-        AtomicBackoff backoff) {
+        @Nullable AtomicBackoff.State backoffState) {
+      System.out.println("new pending entry for " + request);
       this.request = checkNotNull(request, "request");
       this.pendingCall = pendingCall;
-      this.backoff = checkNotNull(backoff, "backoff");
+      if (backoffState == null) {
+        this.backoff = new AtomicBackoff("", initialBackoffTimeMillis);
+      } else {
+        this.backoff = new AtomicBackoff("", backoffState.get());
+      }
       pendingCall.addListener(new Runnable() {
         @Override
         public void run() {
@@ -339,6 +353,7 @@ final class AsyncCachingRlsClient {
     }
 
     private void handleDoneFuture() {
+      System.out.println("pending future is done for " + request);
       if (pendingCall.isCancelled()) {
         return;
       }
@@ -346,10 +361,14 @@ final class AsyncCachingRlsClient {
       synchronized (lock) {
         try {
           transitionToData(pendingCall.get());
+          System.out.println("to data " + request);
         } catch (Exception e) {
           if (e instanceof ThrottledException) {
+            System.out.println("throttled " + request );
             transitionToBackOff(Status.RESOURCE_EXHAUSTED.withCause(e));
           } else {
+            System.out.println("error " + request + " " + e.getMessage());
+            e.printStackTrace();
             transitionToBackOff(Status.fromThrowable(e));
           }
         }
@@ -422,6 +441,26 @@ final class AsyncCachingRlsClient {
       expireTime = now + maxAgeMillis;
       staleTime = now + staleAgeMillis;
       linkedHashLruCache.updateEntrySize(request);
+      System.out.println("data entry request: " + request + " response: " + response + " childPolicy: " + childPolicyWrapper);
+      // set picker etc
+      childPolicyWrapper.setChildPolicy(lbPolicyConfig.getLoadBalancingPolicy());
+      System.out.println("subchannel created");
+      final Subchannel subchannel = helper.createSubchannel(
+          CreateSubchannelArgs.newBuilder().setAddresses(
+              ImmutableList.of(new EquivalentAddressGroup(new InetSocketAddress("localhost", 9001))))
+              .build());
+      childPolicyWrapper.setSubchannel(subchannel);
+      subchannel.start(new SubchannelStateListener() {
+        @Override
+        public void onSubchannelState(ConnectivityStateInfo newState) {
+          System.out.println("subchannel state changed: " + newState);
+          childPolicyWrapper.setConnectivityState(newState.getState());
+          System.out.println("update helper lbstate");
+          helper.updateBalancingState(newState.getState(), childPolicyWrapper.getPicker());
+          System.out.println("done done");
+        }
+      });
+      subchannel.requestConnection();
     }
 
     @Nullable
@@ -445,6 +484,7 @@ final class AsyncCachingRlsClient {
 
     @Override
     void cleanup() {
+      System.out.println("data entry expired: " + request);
       if (childPolicyWrapper != null) {
         childPolicyWrapperPool.returnObject(childPolicyWrapper);
         childPolicyWrapperPool = null;
@@ -465,6 +505,7 @@ final class AsyncCachingRlsClient {
      */
     void maybeRefresh() {
       synchronized (lock) {
+        System.out.println("maybe refresh the entry " + request);
         if (pendingCallCache.containsKey(request)) {
           // pending already requested
           return;
@@ -488,26 +529,20 @@ final class AsyncCachingRlsClient {
     }
   }
 
-  @VisibleForTesting
-  BackoffCacheEntry createBackoffEntry(
-      RouteLookupRequest request, Status status, AtomicBackoff backoff) {
-    return new BackoffCacheEntry(request, status, backoff);
-  }
-
   /**
    *
    */
   private final class BackoffCacheEntry extends CacheEntry {
 
     private final Status status;
-    private final AtomicBackoff backoff;
+    private final AtomicBackoff.State backoffState;
     private final ScheduledFuture<?> scheduledFuture;
 
     BackoffCacheEntry(RouteLookupRequest request, Status status, AtomicBackoff backoff) {
       super(request);
       this.status = checkNotNull(status, "status");
-      this.backoff = checkNotNull(backoff, "backoff");
-      State backoffState = backoff.getState();
+      backoffState = checkNotNull(backoff, "backoff").getState();
+      backoffState.backoff();
       this.scheduledFuture = scheduledExecutorService.schedule(
           new Runnable() {
             @Override
@@ -517,6 +552,7 @@ final class AsyncCachingRlsClient {
           },
           Math.min(backoffState.get(), backoffExpirationTimeMillis),
           TimeUnit.MILLISECONDS);
+      System.out.println("Error entry: " + request + " status: " + status + " backoff time: " + backoffState.get());
     }
 
     void transitionToPending() {
@@ -524,17 +560,20 @@ final class AsyncCachingRlsClient {
         if (!scheduledFuture.isCancelled()) {
           ListenableFuture<RouteLookupResponse> call = asyncRlsCall(request);
           if (!call.isDone()) {
-            PendingCacheEntry pendingEntry = new PendingCacheEntry(request, call);
+            System.out.println("transition to pending " + request);
+            PendingCacheEntry pendingEntry = new PendingCacheEntry(request, call, backoffState);
             pendingCallCache.put(request, pendingEntry);
             linkedHashLruCache.invalidate(request);
           } else {
             try {
+              System.out.println("transition to data from backoff " + request);
               RouteLookupResponse response = call.get();
               linkedHashLruCache.cache(request, new DataCacheEntry(request, response));
             } catch (Exception e) {
+              System.out.println("transition to backoff " + request);
               linkedHashLruCache.cache(
                   request,
-                  new BackoffCacheEntry(request, Status.fromThrowable(e),backoff));
+                  new BackoffCacheEntry(request, Status.fromThrowable(e), new AtomicBackoff("backoff for " + request, backoffState.get())));
             }
           }
         }
@@ -609,6 +648,9 @@ final class AsyncCachingRlsClient {
 
   /** A Builder for {@link AsyncCachingRlsClient}. */
   public static final class Builder {
+
+    private Helper helper;
+    private LbPolicyConfiguration lbPolicyConfig;
     private ManagedChannel channel;
     private ScheduledExecutorService scheduledExecutorService;
     private Executor executor;
@@ -682,6 +724,16 @@ final class AsyncCachingRlsClient {
     public Builder setEvictionListener(
         @Nullable EvictionListener<RouteLookupRequest, CacheEntry> evictionListener) {
       this.evictionListener = evictionListener;
+      return this;
+    }
+
+    public Builder setHelper(Helper helper) {
+      this.helper = checkNotNull(helper, "helper");
+      return this;
+    }
+
+    public Builder setLbPolicyConfig(LbPolicyConfiguration lbPolicyConfig) {
+      this.lbPolicyConfig = checkNotNull(lbPolicyConfig, "lbPolicyConfig");
       return this;
     }
 
