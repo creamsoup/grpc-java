@@ -48,7 +48,6 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
 
   @Override
   public LoadBalancer newLoadBalancer(LoadBalancer.Helper helper) {
-    //TODO also needs key builder map, request cache, lb policy config
     return new RlsLoadBalancer(helper);
   }
 
@@ -59,7 +58,6 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
       RouteLookupConfig routeLookupConfig = new RouteLookupConfigConverter()
           .convert(JsonUtil.getObject(rawLoadBalancingConfigPolicy, "routeLookupConfig"));
       LoadBalancingPolicy lbPolicy = new LoadBalancingPolicy(
-          routeLookupConfig,
           JsonUtil.getString(rawLoadBalancingConfigPolicy, "childPolicyConfigTargetFieldName"),
           JsonUtil.checkObjectList(
               checkNotNull(JsonUtil.getList(rawLoadBalancingConfigPolicy, "childPolicy"))));

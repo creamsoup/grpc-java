@@ -60,22 +60,28 @@ public final class RlsRequestFactory {
         }
       }
     }
+    System.out.println("key builder table: " + table);
     return table;
   }
 
   @CheckReturnValue
-  public RouteLookupRequest create(String target, String path, Metadata metadata) {
-    checkNotNull(target, "target");
-    checkNotNull(path, "path");
-    path = path.substring(1);  // removing leading '/'
-    Map<String, NameMatcher> keyBuilder = keyBuilderTable.row(path);
+  public RouteLookupRequest create(String service, String method, Metadata metadata) {
+    checkNotNull(service, "service");
+    checkNotNull(method, "method");
+    // removing leading '/'
+    if (method.charAt(0) == '/') {
+      method = method.substring(1);
+    }
+    System.out.println("create: " + service + "  / " + method + " / " + metadata);
+    Map<String, NameMatcher> keyBuilder = keyBuilderTable.row(service + "/" + method);
+    System.out.println("full matching " + keyBuilder);
     // if no matching keyBuilder found, fall back to wildcard match (ServiceName/*)
     if (keyBuilder.isEmpty()) {
-      String service = path.substring(0, path.lastIndexOf("/") + 1);
-      keyBuilder = keyBuilderTable.row(service + "*");
+      keyBuilder = keyBuilderTable.row(service + "/*");
+      System.out.println("* matching " + keyBuilder);
     }
     Map<String, String> rlsRequestHeaders = createRequestHeaders(metadata, keyBuilder);
-    return new RouteLookupRequest(target, path, "grpc", rlsRequestHeaders);
+    return new RouteLookupRequest(service, method, "grpc", rlsRequestHeaders);
   }
 
   private Map<String, String> createRequestHeaders(

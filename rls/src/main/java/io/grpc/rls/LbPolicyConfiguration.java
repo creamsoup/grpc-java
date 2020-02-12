@@ -16,17 +16,13 @@
 
 package io.grpc.rls;
 
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import io.grpc.ConnectivityState;
-import io.grpc.LoadBalancer.PickResult;
-import io.grpc.LoadBalancer.PickSubchannelArgs;
 import io.grpc.LoadBalancer.Subchannel;
-import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.LoadBalancerRegistry;
 import io.grpc.internal.AtomicBackoff;
@@ -65,13 +61,13 @@ final class LbPolicyConfiguration {
   }
 
   static final class ChildPolicyWrapper implements Closeable {
+
     private static final Map<String /* target */, ObjectPool<ChildPolicyWrapper>> childPolicyMap =
         new HashMap<>();
     private final String target;
     private LoadBalancingPolicy childPolicy;
     private ConnectivityState connectivityState;
     private Subchannel subchannel;
-    private SubchannelPicker picker = new PendingPicker();
 
     private ChildPolicyWrapper(String target) {
       this.target = target;
@@ -114,13 +110,7 @@ final class LbPolicyConfiguration {
       this.connectivityState = connectivityState;
       if (connectivityState == ConnectivityState.READY) {
         checkState(subchannel != null, "???");
-        System.out.println("setting ReadyPicker");
-        picker = new ReadyPicker(subchannel);
       }
-    }
-
-    public SubchannelPicker getPicker() {
-      return picker;
     }
 
     public ChildPolicyWrapper acquire() {
@@ -138,7 +128,6 @@ final class LbPolicyConfiguration {
       // this might be error prone, if closed is called out side of release.
       childPolicy = null;
       connectivityState = null;
-      picker = null;
     }
 
     @Override
@@ -152,54 +141,32 @@ final class LbPolicyConfiguration {
       ChildPolicyWrapper wrapper = (ChildPolicyWrapper) o;
       return Objects.equal(target, wrapper.target)
           && Objects.equal(childPolicy, wrapper.childPolicy)
-          && connectivityState == wrapper.connectivityState
-          && Objects.equal(picker, wrapper.picker);
+          && connectivityState == wrapper.connectivityState;
     }
 
     @Override
     public int hashCode() {
-      return Objects.hashCode(childPolicyMap, target, childPolicy, connectivityState, picker);
+      return Objects.hashCode(childPolicyMap, target, childPolicy, connectivityState);
+    }
+
+    public Subchannel getSubchannel() {
+      return subchannel;
     }
 
     @Override
     public String toString() {
       return MoreObjects.toStringHelper(this)
-          .add("childPolicyMap", childPolicyMap)
           .add("target", target)
           .add("childPolicy", childPolicy)
           .add("connectivityState", connectivityState)
-          .add("picker", picker)
+          .add("subchannel", subchannel)
           .toString();
-    }
-
-    private static final class PendingPicker extends SubchannelPicker {
-
-      @Override
-      public PickResult pickSubchannel(PickSubchannelArgs args) {
-        return PickResult.withNoResult();
-      }
-    }
-
-    private static final class ReadyPicker extends SubchannelPicker {
-
-      private final Subchannel subchannel;
-
-      public ReadyPicker(Subchannel subchannel) {
-        super();
-        this.subchannel = subchannel;
-      }
-
-      @Override
-      public PickResult pickSubchannel(PickSubchannelArgs args) {
-        return PickResult.withSubchannel(subchannel);
-      }
     }
   }
 
   static final class LoadBalancingPolicy {
 
-    private final RouteLookupConfig routeLookupConfig;
-    private final Map<String, ?> effectiveChildPolicy;
+    private final Map<String, Object> effectiveChildPolicy;
     private final LoadBalancerProvider effectiveLbProvider;
     private final String childPolicyConfigTargetFieldName;
 
@@ -208,15 +175,13 @@ final class LbPolicyConfiguration {
         = new ConcurrentHashMap<>();
 
     public LoadBalancingPolicy(
-        RouteLookupConfig routeLookupConfig,
         String childPolicyConfigTargetFieldName,
         List<Map<String, ?>> childPolicies) {
-      this.routeLookupConfig = checkNotNull(routeLookupConfig, "routeLookupConfig");
       checkState(
           childPolicyConfigTargetFieldName != null && !childPolicyConfigTargetFieldName.isEmpty(),
           "childPolicyConfigTargetFieldName cannot be empty or null");
       this.childPolicyConfigTargetFieldName = childPolicyConfigTargetFieldName;
-      Map<String, ?> effectiveChildPolicy = null;
+      Map<String, Object> effectiveChildPolicy = null;
       LoadBalancerProvider effectiveLbProvider = null;
       List<String> policyTried = new ArrayList<>();
 
@@ -245,11 +210,16 @@ final class LbPolicyConfiguration {
       return childPolicyConfigTargetFieldName;
     }
 
+    @SuppressWarnings("unchecked")
     public Map<String, ?> getEffectiveChildPolicy(String target) {
-      checkArgument(
-          routeLookupConfig.getValidTargets().contains(target),
-          "target(%s) must be present in RouteLookupConfig.validTargets", target);
-      return effectiveChildPolicy;
+      checkState(effectiveChildPolicy.size() == 1, "???");
+      Map.Entry<String, Object> childPolicyEntry =
+          effectiveChildPolicy.entrySet().iterator().next();
+      Map<String, Object> childPolicy =
+          new HashMap<>((Map<String, Object>) childPolicyEntry.getValue());
+      childPolicy.put(childPolicyConfigTargetFieldName, target);
+      System.out.println("EffectiveChildPolicy: " + childPolicy);
+      return childPolicy;
     }
 
     public LoadBalancerProvider getEffectiveLbProvider() {

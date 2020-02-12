@@ -17,32 +17,25 @@
 package io.grpc.rls;
 
 import static com.google.common.base.Preconditions.checkState;
-import static io.grpc.LoadBalancer.ATTR_LOAD_BALANCING_CONFIG;
 
-import io.grpc.Attributes;
 import io.grpc.ConnectivityState;
 import io.grpc.ConnectivityStateInfo;
 import io.grpc.EquivalentAddressGroup;
-import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.CreateSubchannelArgs;
 import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.PickResult;
 import io.grpc.LoadBalancer.PickSubchannelArgs;
-import io.grpc.LoadBalancer.ResolvedAddresses;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancer.SubchannelStateListener;
-import io.grpc.LoadBalancerProvider;
 import io.grpc.Metadata;
-import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
 import io.grpc.rls.AsyncCachingRlsClient.CachedResponse;
 import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
-import io.grpc.rls.LbPolicyConfiguration.LoadBalancingPolicy;
 import io.grpc.rls.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import java.net.InetSocketAddress;
-import java.util.Map;
+import javax.annotation.Nullable;
 
 public class RlsPicker extends SubchannelPicker {
 
@@ -51,6 +44,7 @@ public class RlsPicker extends SubchannelPicker {
       Metadata.Key.of("X-Google-RLS-Data", Metadata.ASCII_STRING_MARSHALLER);
 
   private LbPolicyConfiguration lbPolicyConfiguration;
+  @Nullable
   private AsyncCachingRlsClient rlsClient; // cache is embedded
   private RlsRequestFactory requestFactory; // aka keyBuilderMap
 
@@ -58,36 +52,65 @@ public class RlsPicker extends SubchannelPicker {
   private Helper helper;
   private RequestProcessingStrategy strategy;
 
+  private ConnectivityState subchannelState = ConnectivityState.IDLE;
+
 
   // TODO manage connectivity status
 
   public RlsPicker(
-      LbPolicyConfiguration lbPolicyConfiguration, AsyncCachingRlsClient client, Helper helper) {
+      LbPolicyConfiguration lbPolicyConfiguration,
+      AsyncCachingRlsClient rlsClient,
+      Helper helper) {
     this.lbPolicyConfiguration = lbPolicyConfiguration;
-    this.rlsClient = client;
+    this.rlsClient = rlsClient;
     this.helper = helper;
     this.requestFactory = new RlsRequestFactory(lbPolicyConfiguration.getRouteLookupConfig());
     this.strategy = lbPolicyConfiguration.getRouteLookupConfig().getRequestProcessingStrategy();
+    rlsClient.addSubchannelStateListener(new RlsSubchannelStateListener() {
+
+      @Override
+      void onRlsServerSubchannelStateChange(ConnectivityState newState) {
+        // do nothing
+      }
+
+      @Override
+      void onSubchannelStateChange(ConnectivityState newState) {
+        // TODO get representative status
+        // if (newState == ConnectivityState.READY) {
+        //   subchannelState = newState;
+        // }
+        System.out.println("rls subchannel created");
+        subchannelState = newState;
+        RlsPicker.this.helper.updateBalancingState(newState, RlsPicker.this);
+      }
+    });
     System.out.println("rls picker created");
+  }
+
+  void updateClient(AsyncCachingRlsClient rlsClient) {
+    if (this.rlsClient != null) {
+      this.rlsClient.close();
+    }
+    this.rlsClient = rlsClient;
   }
 
   @Override
   public PickResult pickSubchannel(PickSubchannelArgs args) {
-    System.out.println("pick subchannel : " + args);
-    //TODO somehow get the authority
-//    String target = args.getCallOptions().getAuthority();
-    String target = "localhost";
-    String path = args.getMethodDescriptor().getFullMethodName();
+    if (this.rlsClient == null) {
+      System.out.println("client is not set, pending pick!");
+      return PickResult.withNoResult();
+    }
 
-    RouteLookupRequest request = requestFactory.create(target, path, args.getHeaders());
+    String[] methodName = args.getMethodDescriptor().getFullMethodName().split("/", 2);
+    RouteLookupRequest request = requestFactory.create(methodName[0], methodName[1], args.getHeaders());
     System.out.println("request: " + request);
     final CachedResponse response = rlsClient.get(request);
     System.out.println("response: " + response);
 
     if (response.hasValidData()) {
-      System.out.println("woohoo has valid data!");
       ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
-      return childPolicyWrapper.getPicker().pickSubchannel(args);
+      System.out.println("woohoo has valid data! subchannel state: " + childPolicyWrapper.getConnectivityState());
+      return PickResult.withSubchannel(childPolicyWrapper.getSubchannel());
     } else if (response.hasError()) {
       System.out.println("error");
       return handleError(response.getStatus());
@@ -181,5 +204,10 @@ public class RlsPicker extends SubchannelPicker {
   public void propagateError(Status error) {
     //TODO impl
     System.out.println("error" + error);
+  }
+
+  static abstract class RlsSubchannelStateListener {
+    abstract void onRlsServerSubchannelStateChange(ConnectivityState newState);
+    abstract void onSubchannelStateChange(ConnectivityState newState);
   }
 }

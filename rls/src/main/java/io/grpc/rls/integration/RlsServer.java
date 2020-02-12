@@ -47,20 +47,28 @@ public class RlsServer {
         final StreamObserver<RouteLookupResponse> responseObserver) {
       final CacheRequest value = cache.get(request);
       if (value == null) {
-        System.out.println("value not found for " + request);
+        System.out.println("###### not found for " + request);
         responseObserver.onError(new RuntimeException("not found"));
       } else {
+        log("###### found", value);
         ses.schedule(
             new Runnable() {
               @Override
               public void run() {
-                System.out.println("request: " + request + "  response: " + request);
                 responseObserver.onNext(value.getResponse());
                 responseObserver.onCompleted();
               }
             }, value.getLatency().getNanos(), TimeUnit.NANOSECONDS);
       }
     }
+  }
+
+  static void log(String message, CacheRequest value) {
+    System.out.println(
+        ">>>> " + message + "\nrequest: " + value.getRequest()
+            + "\nresponse: " + value.getResponse()
+            + "\ndelay: " + value.getLatency()
+            + "\n===============================");
   }
 
   public static final class RlsCacheServerImpl
@@ -94,13 +102,6 @@ public class RlsServer {
       }
       responseObserver.onNext(Empty.getDefaultInstance());
       responseObserver.onCompleted();
-    }
-
-    private void log(String message, CacheRequest value) {
-      System.out.println(
-          ">>>> " + message + "\nrequest: " + value.getRequest()
-              + "\nresponse: " + value.getResponse()
-              + "\ndelay: " + value.getLatency());
     }
   }
 }

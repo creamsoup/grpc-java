@@ -107,15 +107,14 @@ public final class RlsProtoConverters {
       checkUniqueName(grpcKeyBuilders);
       String lookupService = JsonUtil.getString(json, "lookupService");
       long timeout =
-          TimeUnit.SECONDS.toMillis(
-              JsonUtil.getNumber(json, "lookupServiceTimeout").longValue());
-      long maxAge =
-          TimeUnit.SECONDS.toMillis(
-              JsonUtil.getNumber(json, "maxAge").longValue());
-      long staleAge =
-          TimeUnit.SECONDS.toMillis(
-              JsonUtil.getNumber(json, "staleAge").longValue());
-      long cacheSize = JsonUtil.getNumber(json, "cacheSizeBytes").longValue();
+          TimeUnit.SECONDS.toMillis(JsonUtil.getNumberAsLong(json, "lookupServiceTimeout"));
+      Long maxAge =
+          convertIfNotNull(
+              TimeUnit.SECONDS, TimeUnit.MILLISECONDS, JsonUtil.getNumberAsLong(json, "maxAge"));
+      Long staleAge =
+          convertIfNotNull(
+              TimeUnit.SECONDS, TimeUnit.MILLISECONDS, JsonUtil.getNumberAsLong(json, "staleAge"));
+      long cacheSize = JsonUtil.getNumberAsLong(json, "cacheSizeBytes");
       List<String> validTargets = JsonUtil.checkStringList(JsonUtil.getList(json, "validTargets"));
           String defaultTarget = JsonUtil.getString(json, "defaultTarget");
       RequestProcessingStrategy strategy =
@@ -131,6 +130,13 @@ public final class RlsProtoConverters {
           validTargets,
           defaultTarget,
           strategy);
+    }
+
+    private static Long convertIfNotNull(TimeUnit from, TimeUnit to, Long value) {
+      if (value == null) {
+        return null;
+      }
+      return from.convert(value, to);
     }
 
     private void checkUniqueName(List<GrpcKeyBuilder> grpcKeyBuilders) {

@@ -16,6 +16,7 @@
 
 package io.grpc.rls;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
@@ -23,8 +24,10 @@ import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.concurrent.Immutable;
 
@@ -194,8 +197,8 @@ public final class RlsProtoData {
         List<GrpcKeyBuilder> grpcKeyBuilders,
         String lookupService,
         long lookupServiceTimeoutInMillis,
-        long maxAgeInMillis,
-        long staleAgeInMillis,
+        Long maxAgeInMillis,
+        Long staleAgeInMillis,
         long cacheSizeBytes,
         List<String> validTargets,
         String defaultTarget,
@@ -204,10 +207,24 @@ public final class RlsProtoData {
           !checkNotNull(grpcKeyBuilders, "grpcKeyBuilders").isEmpty(),
           "must have at least one GrpcKeyBuilder");
       this.grpcKeyBuilders = ImmutableList.copyOf(grpcKeyBuilders);
+      // TODO(creamsoup) also check if it is URI
+      checkState(
+          lookupService != null && !lookupService.isEmpty(), "lookupService must not be empty");
       this.lookupService = lookupService;
       this.lookupServiceTimeoutInMillis = lookupServiceTimeoutInMillis;
+      if (maxAgeInMillis == null) {
+        checkState(
+            staleAgeInMillis == null, "To specify staleAgeInMillis, must have maxAgeInMillis");
+      }
+      if (maxAgeInMillis == null || maxAgeInMillis == 0) {
+        maxAgeInMillis = MAX_AGE_MILLIS;
+      }
+      if (staleAgeInMillis == null || staleAgeInMillis == 0) {
+        staleAgeInMillis = MAX_AGE_MILLIS;
+      }
       this.maxAgeInMillis = Math.min(maxAgeInMillis, MAX_AGE_MILLIS);
       this.staleAgeInMillis = Math.min(staleAgeInMillis, this.maxAgeInMillis);
+      checkArgument(cacheSizeBytes > 0, "cacheSize must be positive");
       this.cacheSizeBytes = cacheSizeBytes;
       this.validTargets = ImmutableList.copyOf(checkNotNull(validTargets, "validTargets"));
       this.defaultTarget = defaultTarget;
@@ -441,8 +458,17 @@ public final class RlsProtoData {
     private final ImmutableList<NameMatcher> headers;
 
     public GrpcKeyBuilder(List<Name> names, List<NameMatcher> headers) {
-      this.names = ImmutableList.copyOf(checkNotNull(names, "names"));
-      this.headers = ImmutableList.copyOf(checkNotNull(headers, "headers"));
+      checkState(names != null && !names.isEmpty(), "names cannot be empty");
+      this.names = ImmutableList.copyOf(names);
+      checkUniqueKey(checkNotNull(headers, "headers"));
+      this.headers = ImmutableList.copyOf(headers);
+    }
+
+    private static void checkUniqueKey(List<NameMatcher> headers) {
+      Set<String> names = new HashSet<>();
+      for (NameMatcher header :  headers) {
+        checkState(names.add(header.key), "key in headers must be unique");
+      }
     }
 
     /**

@@ -19,7 +19,7 @@ public class Backend {
     Server server =
         NettyServerBuilder
             .forPort(port)
-            .addService(new BackendImpl())
+            .addService(new BackendImpl(port))
             .build();
     try {
       server.start();
@@ -34,18 +34,23 @@ public class Backend {
 
     private final ScheduledExecutorService ses =Executors.newSingleThreadScheduledExecutor();
     private final Random random = new Random();
+    private final int port;
+
+    public BackendImpl(int port) {
+      this.port = port;
+    }
 
     @Override
     public void echo(final EchoRequest request, final StreamObserver<EchoResponse> responseObserver) {
-      int rand = random.nextInt(10);
-      System.out.println("Response in " + rand + " ms.");
+      final int rand = random.nextInt(10);
       ses.schedule(new Runnable() {
         @Override
         public void run() {
+          System.out.println("Responded in " + rand + " ms. req: " + request);
           responseObserver
               .onNext(
                   EchoResponse.newBuilder()
-                      .setMessage("did you say '" + request.getMessage() + "'?")
+                      .setMessage(port + ": did you say '" + request.getMessage() + "'?")
                       .setOriginalMessage(request.getMessage())
                       .build());
           responseObserver.onCompleted();

@@ -22,16 +22,14 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Converter;
 import com.google.common.base.MoreObjects;
-import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
+import io.grpc.ConnectivityState;
 import io.grpc.ConnectivityStateInfo;
-import io.grpc.EquivalentAddressGroup;
 import io.grpc.LoadBalancer.CreateSubchannelArgs;
 import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelStateListener;
-import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.internal.AtomicBackoff;
 import io.grpc.internal.ObjectPool;
@@ -42,13 +40,12 @@ import io.grpc.rls.AdaptiveThrottler.Ticker;
 import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.LruCache.EvictionListener;
 import io.grpc.rls.LruCache.EvictionType;
+import io.grpc.rls.RlsPicker.RlsSubchannelStateListener;
 import io.grpc.rls.RlsProtoConverters.RouteLookupResponseConverter;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import io.grpc.rls.RlsProtoData.RouteLookupResponse;
 import io.grpc.rls.Throttler.ThrottledException;
 import io.grpc.stub.StreamObserver;
-import java.net.InetSocketAddress;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -88,9 +85,6 @@ final class AsyncCachingRlsClient {
   private final Ticker ticker;
   private final Throttler throttler;
 
-  private final ManagedChannel channel;
-  private final RouteLookupServiceStub stub;
-
   private final long maxAgeMillis;
   private final long staleAgeMillis;
   private final long callTimeoutMillis;
@@ -99,13 +93,16 @@ final class AsyncCachingRlsClient {
   private final long backoffExpirationTimeMillis;
   private final Helper helper;
   private final LbPolicyConfiguration lbPolicyConfig;
+  private final Subchannel subchannel;
+
+  @Nullable
+  private RouteLookupServiceStub stub;
+  private RlsSubchannelStateListener rlsSubchannelStateListener;
 
   // TODO: possibly have a sorted map of expire entry to proactively cleanup.
 
   // TODO: use builder (possibly make a copy constructor as well for
   AsyncCachingRlsClient(Builder builder) {
-    this.channel = checkNotNull(builder.channel, "channel");
-    this.stub = RouteLookupServiceGrpc.newStub(channel);
     this.scheduledExecutorService =
         checkNotNull(builder.scheduledExecutorService, "scheduledExecutorService");
     this.executor = checkNotNull(builder.executor, "executor");
@@ -151,6 +148,15 @@ final class AsyncCachingRlsClient {
     this.pendingCallCache = new HashMap<>();
     this.helper = checkNotNull(builder.helper, "helper");
     this.lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
+    this.subchannel = checkNotNull(builder.subchannel, "subchannel");
+    builder.subchannel.start(new SubchannelStateListener() {
+      @Override
+      public void onSubchannelState(ConnectivityStateInfo newState) {
+        System.out.println("Update OOB subchannel: " + newState.getState());
+        handleRlsServerChannelStatus(newState.getState());
+      }
+    });
+    subchannel.requestConnection();
   }
 
   /** Returns a Builder for {@link AsyncCachingRlsClient}. */
@@ -158,9 +164,32 @@ final class AsyncCachingRlsClient {
     return new Builder();
   }
 
+  private void handleRlsServerChannelStatus(ConnectivityState state) {
+    switch (state) {
+      case IDLE:
+        // fall-through
+      case CONNECTING:
+        this.stub = null;
+        return;
+      case READY:
+        this.stub = RouteLookupServiceGrpc.newStub(subchannel.asChannel());
+        System.out.println("created a stub");
+        return;
+      case TRANSIENT_FAILURE:
+        System.out.println("channel failing");
+        return;
+      case SHUTDOWN:
+        this.stub = null;
+    }
+  }
+
   @CheckReturnValue
   private ListenableFuture<RouteLookupResponse> asyncRlsCall(RouteLookupRequest request) {
     final SettableFuture<RouteLookupResponse> response = SettableFuture.create();
+    if (stub == null) {
+      response.setException(new RuntimeException("OobChannel is not ready yet"));
+      return response;
+    }
     if (throttler.shouldThrottle()) {
       response.setException(new ThrottledException());
       return response;
@@ -175,6 +204,8 @@ final class AsyncCachingRlsClient {
 
           @Override
           public void onError(Throwable t) {
+            System.out.println("on ERROR in asyncCall: " + stub);
+            t.printStackTrace();
             response.setException(t);
             throttler.registerBackendResponse(false);
           }
@@ -199,6 +230,7 @@ final class AsyncCachingRlsClient {
       final CacheEntry cacheEntry;
       cacheEntry = linkedHashLruCache.read(request);
       if (cacheEntry == null) {
+        System.out.println("pending!");
         return handleNewRequest(request);
       }
 
@@ -207,11 +239,14 @@ final class AsyncCachingRlsClient {
         // cache hit, check if entry is staled to fire async-refresh
         DataCacheEntry dataEntry = ((DataCacheEntry) cacheEntry);
         if (dataEntry.isStaled(now)) {
+          System.out.println("refresh!");
           dataEntry.maybeRefresh();
         }
       } else {
+        System.out.println("cache error backoff!");
         return CachedResponse.backoffEntry((BackoffCacheEntry) cacheEntry);
       }
+      System.out.println("cache hit! " + cacheEntry);
       return CachedResponse.dataEntry((DataCacheEntry) cacheEntry);
     }
   }
@@ -219,7 +254,6 @@ final class AsyncCachingRlsClient {
   /** Performs any pending maintenance operations needed by the cache. */
   public synchronized void close() {
     linkedHashLruCache.close();
-    channel.shutdown();
   }
 
   // should hold lock
@@ -247,6 +281,10 @@ final class AsyncCachingRlsClient {
                 new AtomicBackoff("rls:" + request.getServer(), initialBackoffTimeMillis)));
       }
     }
+  }
+
+  public void addSubchannelStateListener(RlsSubchannelStateListener rlsSubchannelStateListener) {
+    this.rlsSubchannelStateListener = checkNotNull(rlsSubchannelStateListener, "rlsSubchannelStateListener");
   }
 
   // TODO possibly return wrapper like this
@@ -386,6 +424,15 @@ final class AsyncCachingRlsClient {
       pendingCallCache.remove(request);
       linkedHashLruCache.cache(request, new BackoffCacheEntry(request, status, backoff));
     }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("pendingCall", pendingCall)
+          .add("request", request)
+          .add("backoff", backoff)
+          .toString();
+    }
   }
 
   /**
@@ -435,32 +482,37 @@ final class AsyncCachingRlsClient {
       super(request);
       this.response = checkNotNull(response, "response");
       headerData = response.getHeaderData();
-      childPolicyWrapperPool = ChildPolicyWrapper.createOrGet(request.getServer());
+
+      childPolicyWrapperPool = ChildPolicyWrapper.createOrGet(response.getTarget());
       childPolicyWrapper = childPolicyWrapperPool.getObject();
       long now = ticker.nowInMillis();
       expireTime = now + maxAgeMillis;
       staleTime = now + staleAgeMillis;
       linkedHashLruCache.updateEntrySize(request);
-      System.out.println("data entry request: " + request + " response: " + response + " childPolicy: " + childPolicyWrapper);
-      // set picker etc
-      childPolicyWrapper.setChildPolicy(lbPolicyConfig.getLoadBalancingPolicy());
-      System.out.println("subchannel created");
-      final Subchannel subchannel = helper.createSubchannel(
-          CreateSubchannelArgs.newBuilder().setAddresses(
-              ImmutableList.of(new EquivalentAddressGroup(new InetSocketAddress("localhost", 9001))))
-              .build());
-      childPolicyWrapper.setSubchannel(subchannel);
-      subchannel.start(new SubchannelStateListener() {
-        @Override
-        public void onSubchannelState(ConnectivityStateInfo newState) {
-          System.out.println("subchannel state changed: " + newState);
-          childPolicyWrapper.setConnectivityState(newState.getState());
-          System.out.println("update helper lbstate");
-          helper.updateBalancingState(newState.getState(), childPolicyWrapper.getPicker());
-          System.out.println("done done");
-        }
-      });
-      subchannel.requestConnection();
+      System.out.println("data entry request: " + request + " response: " + response + " childPolicy: " + childPolicyWrapper + " server: " + request.getServer());
+
+      if (childPolicyWrapper.getSubchannel() != null) {
+        // set picker etc
+        childPolicyWrapper.setChildPolicy(lbPolicyConfig.getLoadBalancingPolicy());
+        final Subchannel subchannel = helper.createSubchannel(
+            CreateSubchannelArgs.newBuilder()
+                .setAddresses(RlsUtil.createEag(response.getTarget()))
+                .build());
+        childPolicyWrapper.setSubchannel(subchannel);
+        System.out.println(
+            "subchannel created response: " + response + "  created subchannel: " + subchannel);
+        subchannel.start(new SubchannelStateListener() {
+          @Override
+          public void onSubchannelState(ConnectivityStateInfo newState) {
+            System.out.println("subchannel state changed: " + newState);
+            childPolicyWrapper.setConnectivityState(newState.getState());
+            if (rlsSubchannelStateListener != null) {
+              rlsSubchannelStateListener.onSubchannelStateChange(newState.getState());
+            }
+          }
+        });
+        subchannel.requestConnection();
+      }
     }
 
     @Nullable
@@ -526,6 +578,17 @@ final class AsyncCachingRlsClient {
     @Override
     boolean isStaled(long now) {
       return staleTime <= now;
+    }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("response", response)
+          .add("headerData", headerData)
+          .add("expireTime", expireTime)
+          .add("staleTime", staleTime)
+          .add("childPolicyWrapper", childPolicyWrapper)
+          .toString();
     }
   }
 
@@ -610,6 +673,15 @@ final class AsyncCachingRlsClient {
         scheduledFuture.cancel(true);
       }
     }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("status", status)
+          .add("backoffState", backoffState)
+          .add("scheduledFuture", scheduledFuture)
+          .toString();
+    }
   }
 
   private static final class AutoCleaningEvictionListener
@@ -651,7 +723,6 @@ final class AsyncCachingRlsClient {
 
     private Helper helper;
     private LbPolicyConfiguration lbPolicyConfig;
-    private ManagedChannel channel;
     private ScheduledExecutorService scheduledExecutorService;
     private Executor executor;
     private long maxCacheSizeBytes = 100 * 1024 * 1024; // 100 MB
@@ -663,11 +734,7 @@ final class AsyncCachingRlsClient {
     private Ticker ticker = new SystemTicker();
     private Throttler throttler = new HappyThrottler();
     private EvictionListener<RouteLookupRequest, CacheEntry> evictionListener = null;
-
-    public Builder setChannel(ManagedChannel channel) {
-      this.channel = checkNotNull(channel, "channel");
-      return this;
-    }
+    private Subchannel subchannel;
 
     public Builder setScheduledExecutorService(
         ScheduledExecutorService scheduledExecutorService) {
@@ -734,6 +801,11 @@ final class AsyncCachingRlsClient {
 
     public Builder setLbPolicyConfig(LbPolicyConfiguration lbPolicyConfig) {
       this.lbPolicyConfig = checkNotNull(lbPolicyConfig, "lbPolicyConfig");
+      return this;
+    }
+
+    public Builder setSubchannel(Subchannel rlsServerChannel) {
+      this.subchannel = checkNotNull(rlsServerChannel, "rlsServerChannel");
       return this;
     }
 
