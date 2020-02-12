@@ -21,11 +21,18 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.MoreObjects;
+import com.google.common.collect.UnmodifiableIterator;
+import com.google.common.collect.UnmodifiableListIterator;
 import io.grpc.rls.AdaptiveThrottler.Ticker;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -216,6 +223,15 @@ public abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
   public final boolean hasCacheEntry(K key) {
     // call get to handle expired
     return readInternal(key) != null;
+  }
+
+  /** Returns shallow copied values. */
+  public final List<V> values() {
+    List<V> list = new ArrayList<>(delegate.size());
+    for (SizedValue value : delegate.values()) {
+      list.add(value.value);
+    }
+    return Collections.unmodifiableList(list);
   }
 
   public final void resize(int newSize) {

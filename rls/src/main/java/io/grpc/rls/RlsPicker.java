@@ -74,8 +74,8 @@ public class RlsPicker extends SubchannelPicker {
 
       @Override
       void onSubchannelStateChange(String target, ConnectivityState newState) {
+        // this is just informative, not really used
         subchannelStateManager.registerOobState(newState);
-        // TODO(creamsoup) handle if oob channel is in TRANSIENT_FAILURE
       }
     });
     rlsClient.addSubchannelStateListener(new RlsSubchannelStateListener() {

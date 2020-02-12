@@ -172,6 +172,7 @@ final class AsyncCachingRlsClient {
   private ConnectivityState oobChannelState = ConnectivityState.IDLE;
 
   private void handleRlsServerChannelStatus(ConnectivityState state) {
+    ConnectivityState oobChannelStateCopy = oobChannelState;
     oobChannelState = state;
     switch (state) {
       case IDLE:
@@ -182,7 +183,13 @@ final class AsyncCachingRlsClient {
       case READY:
         this.stub = RouteLookupServiceGrpc.newStub(subchannel.asChannel());
         System.out.println("created a stub");
-        return;
+        if (oobChannelStateCopy == ConnectivityState.TRANSIENT_FAILURE) {
+          for (CacheEntry cacheEntry : this.linkedHashLruCache.values()) {
+            if (cacheEntry instanceof BackoffCacheEntry) {
+              ((BackoffCacheEntry) cacheEntry).forceRefresh();
+            }
+          }
+        }
       case TRANSIENT_FAILURE:
         System.out.println("channel failing");
         return;
@@ -617,6 +624,7 @@ final class AsyncCachingRlsClient {
     private final Status status;
     private final AtomicBackoff.State backoffState;
     private final ScheduledFuture<?> scheduledFuture;
+    private volatile boolean shutdown = false;
 
     BackoffCacheEntry(RouteLookupRequest request, Status status, AtomicBackoff backoff) {
       super(request);
@@ -635,26 +643,35 @@ final class AsyncCachingRlsClient {
       System.out.println("Error entry: " + request + " status: " + status + " backoff time: " + backoffState.get());
     }
 
+    public void forceRefresh() {
+      boolean cancelled = scheduledFuture.cancel(false);
+      if (cancelled) {
+        transitionToPending();
+      }
+    }
+
     void transitionToPending() {
+      if (shutdown) {
+        return;
+      }
+
       synchronized (lock) {
-        if (!scheduledFuture.isCancelled()) {
-          ListenableFuture<RouteLookupResponse> call = asyncRlsCall(request);
-          if (!call.isDone()) {
-            System.out.println("transition to pending " + request);
-            PendingCacheEntry pendingEntry = new PendingCacheEntry(request, call, backoffState);
-            pendingCallCache.put(request, pendingEntry);
-            linkedHashLruCache.invalidate(request);
-          } else {
-            try {
-              System.out.println("transition to data from backoff " + request);
-              RouteLookupResponse response = call.get();
-              linkedHashLruCache.cache(request, new DataCacheEntry(request, response));
-            } catch (Exception e) {
-              System.out.println("transition to backoff " + request);
-              linkedHashLruCache.cache(
-                  request,
-                  new BackoffCacheEntry(request, Status.fromThrowable(e), new AtomicBackoff("backoff for " + request, backoffState.get())));
-            }
+        ListenableFuture<RouteLookupResponse> call = asyncRlsCall(request);
+        if (!call.isDone()) {
+          System.out.println("transition to pending " + request);
+          PendingCacheEntry pendingEntry = new PendingCacheEntry(request, call, backoffState);
+          pendingCallCache.put(request, pendingEntry);
+          linkedHashLruCache.invalidate(request);
+        } else {
+          try {
+            System.out.println("transition to data from backoff " + request);
+            RouteLookupResponse response = call.get();
+            linkedHashLruCache.cache(request, new DataCacheEntry(request, response));
+          } catch (Exception e) {
+            System.out.println("transition to backoff " + request);
+            linkedHashLruCache.cache(
+                request,
+                new BackoffCacheEntry(request, Status.fromThrowable(e), new AtomicBackoff("backoff for " + request, backoffState.get())));
           }
         }
       }
@@ -686,6 +703,7 @@ final class AsyncCachingRlsClient {
 
     @Override
     void cleanup() {
+      shutdown = true;
       if (!scheduledFuture.isCancelled()) {
         scheduledFuture.cancel(true);
       }
