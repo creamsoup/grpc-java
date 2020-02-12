@@ -98,6 +98,7 @@ final class AsyncCachingRlsClient {
   @Nullable
   private RouteLookupServiceStub stub;
   private RlsSubchannelStateListener rlsSubchannelStateListener;
+  private RlsSubchannelStateListener oobChannelStateListener;
 
   // TODO: possibly have a sorted map of expire entry to proactively cleanup.
 
@@ -152,8 +153,12 @@ final class AsyncCachingRlsClient {
     builder.subchannel.start(new SubchannelStateListener() {
       @Override
       public void onSubchannelState(ConnectivityStateInfo newState) {
+        // TODO(creamsoup) somehow report OOB channel
         System.out.println("Update OOB subchannel: " + newState.getState());
         handleRlsServerChannelStatus(newState.getState());
+        if (oobChannelStateListener != null) {
+          oobChannelStateListener.onSubchannelStateChange("oobChannel", newState.getState());
+        }
       }
     });
     subchannel.requestConnection();
@@ -164,7 +169,10 @@ final class AsyncCachingRlsClient {
     return new Builder();
   }
 
+  private ConnectivityState oobChannelState = ConnectivityState.IDLE;
+
   private void handleRlsServerChannelStatus(ConnectivityState state) {
+    oobChannelState = state;
     switch (state) {
       case IDLE:
         // fall-through
@@ -195,6 +203,7 @@ final class AsyncCachingRlsClient {
       return response;
     }
     io.grpc.lookup.v1.RouteLookupRequest rlsRequest = reqConverter.convert(request);
+    System.out.println("calling " + rlsRequest);
     stub.withDeadlineAfter(callTimeoutMillis, TimeUnit.MILLISECONDS)
         .routeLookup(rlsRequest, new StreamObserver<io.grpc.lookup.v1.RouteLookupResponse>() {
           @Override
@@ -285,6 +294,11 @@ final class AsyncCachingRlsClient {
 
   public void addSubchannelStateListener(RlsSubchannelStateListener rlsSubchannelStateListener) {
     this.rlsSubchannelStateListener = checkNotNull(rlsSubchannelStateListener, "rlsSubchannelStateListener");
+  }
+
+  public void addOobChannelStateListener(RlsSubchannelStateListener oobChannelStateListener) {
+    oobChannelStateListener.onSubchannelStateChange("oobChannel", oobChannelState);
+    this.oobChannelStateListener = checkNotNull(oobChannelStateListener, "oobChannelStateListener");
   }
 
   // TODO possibly return wrapper like this
@@ -478,7 +492,7 @@ final class AsyncCachingRlsClient {
     @Nullable ObjectPool<ChildPolicyWrapper> childPolicyWrapperPool;
     ChildPolicyWrapper childPolicyWrapper;
 
-    DataCacheEntry(RouteLookupRequest request, RouteLookupResponse response) {
+    DataCacheEntry(RouteLookupRequest request, final RouteLookupResponse response) {
       super(request);
       this.response = checkNotNull(response, "response");
       headerData = response.getHeaderData();
@@ -491,7 +505,7 @@ final class AsyncCachingRlsClient {
       linkedHashLruCache.updateEntrySize(request);
       System.out.println("data entry request: " + request + " response: " + response + " childPolicy: " + childPolicyWrapper + " server: " + request.getServer());
 
-      if (childPolicyWrapper.getSubchannel() != null) {
+      if (childPolicyWrapper.getSubchannel() == null) {
         // set picker etc
         childPolicyWrapper.setChildPolicy(lbPolicyConfig.getLoadBalancingPolicy());
         final Subchannel subchannel = helper.createSubchannel(
@@ -504,14 +518,17 @@ final class AsyncCachingRlsClient {
         subchannel.start(new SubchannelStateListener() {
           @Override
           public void onSubchannelState(ConnectivityStateInfo newState) {
-            System.out.println("subchannel state changed: " + newState);
+            System.out.println("backend subchannel state changed: " + newState);
             childPolicyWrapper.setConnectivityState(newState.getState());
             if (rlsSubchannelStateListener != null) {
-              rlsSubchannelStateListener.onSubchannelStateChange(newState.getState());
+              rlsSubchannelStateListener
+                  .onSubchannelStateChange(response.getTarget(), newState.getState());
             }
           }
         });
         subchannel.requestConnection();
+      } else {
+        System.out.println("woohoo reusing child policy! " + childPolicyWrapper);
       }
     }
 

@@ -15,8 +15,6 @@ import io.grpc.lookup.v1.EchoResponse;
 import io.grpc.lookup.v1.RouteLookupRequest;
 import io.grpc.lookup.v1.RouteLookupResponse;
 import io.grpc.netty.NettyChannelBuilder;
-import io.grpc.rls.RlsProtoConverters;
-import io.grpc.rls.RlsRequestFactory;
 import io.grpc.stub.MetadataUtils;
 import java.io.IOException;
 import java.util.Collections;
@@ -26,25 +24,10 @@ import java.util.concurrent.TimeUnit;
 public class Client {
 
   public static void main(String[] args) throws Exception {
-    runClient(args);
-    // testMetadata();
+    runClient();
   }
 
-  @SuppressWarnings("unchecked")
-  public static void testMetadata() throws IOException {
-    RlsRequestFactory factory =
-        new RlsRequestFactory(
-            new RlsProtoConverters.RouteLookupConfigConverter()
-                .convert((Map<String, Object>) JsonParser.parse(getRlsConfigJsonStr())));
-    Metadata metadata = new Metadata();
-    metadata.put(Metadata.Key.of("User", Metadata.ASCII_STRING_MARSHALLER), "creamsoup");
-    System.out.println("!!metadata: " + metadata);
-    System.out.println(factory.create("grpc.lookup.v1.BackendService", "Echo", metadata));
-    System.out.println(factory.create("grpc.lookup.v1.BackendService", "Echo2", metadata));
-  }
-
-
-  public static void runClient(String[] args) throws Exception {
+  static void runClient() throws Exception {
     ManagedChannel clientChannel =
         NettyChannelBuilder
             // this will be ignored
@@ -80,6 +63,18 @@ public class Client {
     rlsControlStub.registerReturnValue(createCacheRequest(request2, response2, 100));
     System.out.println("register request2 response2 done");
 
+    System.out.println("register request3 response3");
+    RouteLookupRequest request3 =
+        createRequest(
+            "grpc.lookup.v1.BackendService",
+            "Echo",
+            ImmutableMap.of("id", "ididid"));
+    RouteLookupResponse response3 =
+        createResponse("localhost:9002", "foo should have been the first one but who cares");
+    rlsControlStub.registerReturnValue(createCacheRequest(request3, response3, 20));
+    System.out.println("register request2 response2 done");
+
+
     System.out.println("=========================================");
 
     BackendServiceBlockingStub bStub = BackendServiceGrpc.newBlockingStub(clientChannel);
@@ -96,6 +91,14 @@ public class Client {
           MetadataUtils.attachHeaders(bStub, metadata)
               .echo(EchoRequest.newBuilder().setMessage("message" + i).build());
       System.out.println("request " + i + " to backend2(9002) -> " + respBackend2);
+
+      System.out.println("iter " + i + " to backend2(9002): " + System.currentTimeMillis());
+      Metadata metadata2 = new Metadata();
+      metadata2.put(Metadata.Key.of("X-Google-Id", Metadata.ASCII_STRING_MARSHALLER), "ididid");
+      EchoResponse respBackend2prime =
+          MetadataUtils.attachHeaders(bStub, metadata2)
+              .echo(EchoRequest.newBuilder().setMessage("message" + i).build());
+      System.out.println("request " + i + " to backend2'(9002) -> " + respBackend2prime);
     }
   }
 
@@ -193,7 +196,7 @@ public class Client {
           + "  \"staleAge\": 240,\n"
           + "  \"validTargets\": [\"localhost:9001\", \"localhost:9002\"],"
           + "  \"cacheSizeBytes\": 1000,\n"
-          + "  \"defaultTarget\": \"us_east_1.cloudbigtable.googleapis.com\",\n"
+          + "  \"defaultTarget\": \"localhost:9003\",\n"
           + "  \"requestProcessingStrategy\": \"ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS\"\n"
           + "}";
   }

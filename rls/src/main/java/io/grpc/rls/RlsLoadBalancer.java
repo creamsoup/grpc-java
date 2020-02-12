@@ -90,7 +90,6 @@ class RlsLoadBalancer extends LoadBalancer {
               .build();
       routeLookupClient = client;
       picker = new RlsPicker(lbPolicyConfiguration, client, helper);
-      helper.updateBalancingState(ConnectivityState.CONNECTING, picker);
     }
 
     this.lbPolicyConfiguration = lbPolicyConfiguration;

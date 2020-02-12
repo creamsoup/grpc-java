@@ -16,11 +16,13 @@
 
 package io.grpc.rls;
 
-import static com.google.common.base.Preconditions.checkState;
+import static io.opencensus.internal.Utils.checkNotNull;
 
+import com.google.common.base.MoreObjects;
+import com.google.common.collect.ConcurrentHashMultiset;
+import com.google.common.collect.Multiset;
 import io.grpc.ConnectivityState;
 import io.grpc.ConnectivityStateInfo;
-import io.grpc.EquivalentAddressGroup;
 import io.grpc.LoadBalancer.CreateSubchannelArgs;
 import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.PickResult;
@@ -34,7 +36,9 @@ import io.grpc.rls.AsyncCachingRlsClient.CachedResponse;
 import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
-import java.net.InetSocketAddress;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import javax.annotation.Nullable;
 
 public class RlsPicker extends SubchannelPicker {
@@ -52,8 +56,7 @@ public class RlsPicker extends SubchannelPicker {
   private Helper helper;
   private RequestProcessingStrategy strategy;
 
-  private ConnectivityState subchannelState = ConnectivityState.IDLE;
-
+  private RlsSubchannelStateManager subchannelStateManager = new RlsSubchannelStateManager();
 
   // TODO manage connectivity status
 
@@ -66,36 +69,32 @@ public class RlsPicker extends SubchannelPicker {
     this.helper = helper;
     this.requestFactory = new RlsRequestFactory(lbPolicyConfiguration.getRouteLookupConfig());
     this.strategy = lbPolicyConfiguration.getRouteLookupConfig().getRequestProcessingStrategy();
+    helper.updateBalancingState(ConnectivityState.CONNECTING, this);
+    rlsClient.addOobChannelStateListener(new RlsSubchannelStateListener() {
+
+      @Override
+      void onSubchannelStateChange(String target, ConnectivityState newState) {
+        subchannelStateManager.registerOobState(newState);
+        // TODO(creamsoup) handle if oob channel is in TRANSIENT_FAILURE
+      }
+    });
     rlsClient.addSubchannelStateListener(new RlsSubchannelStateListener() {
 
       @Override
-      void onRlsServerSubchannelStateChange(ConnectivityState newState) {
-        // do nothing
-      }
-
-      @Override
-      void onSubchannelStateChange(ConnectivityState newState) {
-        // TODO get representative status
-        // if (newState == ConnectivityState.READY) {
-        //   subchannelState = newState;
-        // }
-        System.out.println("rls subchannel created");
-        subchannelState = newState;
-        RlsPicker.this.helper.updateBalancingState(newState, RlsPicker.this);
+      void onSubchannelStateChange(String name, ConnectivityState newState) {
+        subchannelStateManager.registerNewState(name, newState);
+        // potentially move this to the manager
+        RlsPicker.this.helper
+            .updateBalancingState(subchannelStateManager.getAggregatedState(), RlsPicker.this);
       }
     });
     System.out.println("rls picker created");
   }
 
-  void updateClient(AsyncCachingRlsClient rlsClient) {
-    if (this.rlsClient != null) {
-      this.rlsClient.close();
-    }
-    this.rlsClient = rlsClient;
-  }
-
   @Override
   public PickResult pickSubchannel(PickSubchannelArgs args) {
+    //TODO(creamsoup) use subchannel manager
+    System.out.println("===================================================");
     if (this.rlsClient == null) {
       System.out.println("client is not set, pending pick!");
       return PickResult.withNoResult();
@@ -103,19 +102,19 @@ public class RlsPicker extends SubchannelPicker {
 
     String[] methodName = args.getMethodDescriptor().getFullMethodName().split("/", 2);
     RouteLookupRequest request = requestFactory.create(methodName[0], methodName[1], args.getHeaders());
-    System.out.println("request: " + request);
+    System.out.println("pick request: " + request);
     final CachedResponse response = rlsClient.get(request);
     System.out.println("response: " + response);
 
     if (response.hasValidData()) {
       ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
-      System.out.println("woohoo has valid data! subchannel state: " + childPolicyWrapper.getConnectivityState());
+      System.out.println(">>>> valid data! subchannel state: " + childPolicyWrapper.getConnectivityState());
       return PickResult.withSubchannel(childPolicyWrapper.getSubchannel());
     } else if (response.hasError()) {
-      System.out.println("error");
+      System.out.println(">>>> error");
       return handleError(response.getStatus());
     } else {
-      System.out.println("pending");
+      System.out.println(">>>> pending");
       // pending request
       return handlePendingRequest(args);
     }
@@ -124,11 +123,13 @@ public class RlsPicker extends SubchannelPicker {
   private PickResult handleError(Status cause) {
     switch (strategy) {
       case SYNC_LOOKUP_CLIENT_SEES_ERROR:
+        System.out.println("with error");
         return PickResult.withError(cause);
       case SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR:
+        return useFallbackSubchannel(/* blocking= */ true);
         // fall-through
       case ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS:
-        return useFallbackSubchannel();
+        return useFallbackSubchannel(/* blocking= */ false);
     }
     throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
   }
@@ -136,78 +137,143 @@ public class RlsPicker extends SubchannelPicker {
   private PickResult handlePendingRequest(PickSubchannelArgs args) {
     switch (strategy) {
       case SYNC_LOOKUP_CLIENT_SEES_ERROR:
-        // fall-through
+        return PickResult.withNoResult();
       case SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR:
         // pick queue
-        return PickResult.withNoResult();
+        return useFallbackSubchannel(/* blocking= */ true);
       case ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS:
         // use default target
-        return useFallbackSubchannel();
+        return useFallbackSubchannel(/* blocking= */ false);
     }
     throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
   }
 
   private Subchannel fallbackSubchannel;
   private String fallbackAddress;
-  private ConnectivityState fallbackChannelConnectivityState = ConnectivityState.IDLE;
   private Status fallbackChannelStatus;
 
   /** Uses Subchannel connected to default target. */
-  private PickResult useFallbackSubchannel() {
-    String defaultTarget = lbPolicyConfiguration.getRouteLookupConfig().getDefaultTarget();
-    if (!defaultTarget.equals(fallbackAddress)) {
-      if (fallbackSubchannel != null) {
-        fallbackSubchannel.shutdown();
+  private PickResult useFallbackSubchannel(boolean blocking) {
+    System.out.println("use fallback! blocking: " + blocking);
+    CountDownLatch readyLatch = maybeStartFallbackChannel();
+    if (blocking) {
+      System.out.println("waiting to be connected");
+      try {
+        readyLatch
+            .await(
+                lbPolicyConfiguration.getRouteLookupConfig().getLookupServiceTimeoutInMillis(),
+                TimeUnit.MILLISECONDS);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return PickResult.withError(Status.ABORTED.withDescription("interrupted"));
+      } catch (Exception e) {
+          return PickResult.withError(Status.fromThrowable(e));
       }
-      fallbackAddress = defaultTarget;
-      InetSocketAddress targetSocketAddr = parseAddress(defaultTarget);
-      fallbackSubchannel = helper.createSubchannel(
-          CreateSubchannelArgs.newBuilder()
-              .setAddresses(new EquivalentAddressGroup(targetSocketAddr))
-              .build());
-      fallbackSubchannel.start(new SubchannelStateListener() {
-        @Override
-        public void onSubchannelState(ConnectivityStateInfo newState) {
-          fallbackChannelConnectivityState = newState.getState();
-          fallbackChannelStatus = newState.getStatus();
-        }
-      });
     }
-    switch (fallbackChannelConnectivityState) {
+
+    switch (subchannelStateManager.getState("fallback")) {
       case IDLE:
         // fall-through
       case CONNECTING:
+        System.out.println("fallback no result");
         return PickResult.withNoResult();
       case TRANSIENT_FAILURE:
         // fall-through
       case SHUTDOWN:
+        System.out.println("fallback shutdown error");
         return PickResult
             .withError(fallbackChannelStatus != null ? fallbackChannelStatus : Status.UNKNOWN);
       case READY:
+        System.out.println("fallback ready!");
         return PickResult.withSubchannel(fallbackSubchannel);
     }
     throw new AssertionError();
   }
 
-  private InetSocketAddress parseAddress(String name) {
-    if (name.contains(":")) {
-      String[] addrs = name.split(":", 2);
-      checkState(addrs.length == 2, "address expect to be host:port format");
-      String host = addrs[0];
-      int port = Integer.parseInt(addrs[1]);
-      return InetSocketAddress.createUnresolved(host, port);
-    } else {
-      return InetSocketAddress.createUnresolved(name, 80);
+  private CountDownLatch maybeStartFallbackChannel() {
+    String defaultTarget = lbPolicyConfiguration.getRouteLookupConfig().getDefaultTarget();
+    if (!defaultTarget.equals(fallbackAddress)) {
+      System.out.println("connecting to fallback channel, target: " + defaultTarget);
+      final CountDownLatch readyLatch = new CountDownLatch(1);
+      if (fallbackSubchannel != null) {
+        fallbackSubchannel.shutdown();
+      }
+      subchannelStateManager.registerNewState("fallback", ConnectivityState.IDLE);
+      fallbackAddress = defaultTarget;
+      fallbackSubchannel = helper.createSubchannel(
+          CreateSubchannelArgs.newBuilder()
+              .setAddresses(RlsUtil.createEag(defaultTarget))
+              .build());
+      fallbackSubchannel.start(new SubchannelStateListener() {
+        @Override
+        public void onSubchannelState(ConnectivityStateInfo newState) {
+          System.out.println("fallback subchannel state " + newState);
+          subchannelStateManager.registerNewState("fallback", newState.getState());
+          fallbackChannelStatus = newState.getStatus();
+          helper.updateBalancingState(newState.getState(), RlsPicker.this);
+          if (newState.getState() == ConnectivityState.READY) {
+            readyLatch.countDown();
+          }
+        }
+      });
+      fallbackSubchannel.requestConnection();
+      return readyLatch;
     }
-  }
-
-  public void propagateError(Status error) {
-    //TODO impl
-    System.out.println("error" + error);
+    System.out.println("reusing fallback channel");
+    return new CountDownLatch(0);
   }
 
   static abstract class RlsSubchannelStateListener {
-    abstract void onRlsServerSubchannelStateChange(ConnectivityState newState);
-    abstract void onSubchannelStateChange(ConnectivityState newState);
+    abstract void onSubchannelStateChange(String target, ConnectivityState newState);
+  }
+
+  static final class RlsSubchannelStateManager {
+    ConnectivityState oobChannelState = ConnectivityState.IDLE;
+    ConcurrentHashMap<String, ConnectivityState> stateMap = new ConcurrentHashMap<>();
+    Multiset<ConnectivityState> stateMultiset = ConcurrentHashMultiset.create();
+
+    void registerNewState(String name, ConnectivityState newState) {
+      ConnectivityState existing;
+      if (newState == ConnectivityState.SHUTDOWN) {
+        existing = stateMap.remove(name);
+      } else {
+        existing = stateMap.put(checkNotNull(name, "name"), checkNotNull(newState, "newState"));
+        stateMultiset.add(newState);
+      }
+      if (existing != null) {
+        stateMultiset.remove(existing);
+      }
+      System.out.println("new State registered: " + name + " " + newState + " / aggState: " + getAggregatedState());
+    }
+
+    @Nullable
+    ConnectivityState getState(String name) {
+      return stateMap.get(checkNotNull(name, "name"));
+    }
+
+    ConnectivityState getAggregatedState() {
+      if (stateMultiset.contains(ConnectivityState.READY)) {
+        return ConnectivityState.READY;
+      } else if (stateMultiset.contains(ConnectivityState.CONNECTING)) {
+        return ConnectivityState.CONNECTING;
+      } else if (stateMultiset.contains(ConnectivityState.IDLE)) {
+        return ConnectivityState.IDLE;
+      } else if (stateMultiset.contains(ConnectivityState.TRANSIENT_FAILURE)) {
+        return ConnectivityState.TRANSIENT_FAILURE;
+      }
+      // empty or shutdown
+      return ConnectivityState.IDLE;
+    }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("stateMap", stateMap)
+          .toString();
+    }
+
+    public void registerOobState(ConnectivityState newState) {
+      oobChannelState = newState;
+    }
   }
 }
