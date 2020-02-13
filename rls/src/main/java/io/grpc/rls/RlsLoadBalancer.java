@@ -88,6 +88,8 @@ class RlsLoadBalancer extends LoadBalancer {
       // rls picker will report to helper
       new RlsPicker(lbPolicyConfiguration, client, helper);
     }
+    // TODO(creamsoup) update configs if necessary (maybe easier to create new cache?)
+    //  for v1 implementation this is not required.
 
     this.lbPolicyConfiguration = lbPolicyConfiguration;
     helper.getChannelLogger()

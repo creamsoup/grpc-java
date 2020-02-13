@@ -493,21 +493,19 @@ final class AsyncCachingRlsClient {
    */
   @VisibleForTesting
   private final class DataCacheEntry extends CacheEntry {
-    final RouteLookupResponse response;
-    final @Nullable String headerData;
-    final long expireTime;
-    final long staleTime;
-
-    @Nullable ObjectPool<ChildPolicyWrapper> childPolicyWrapperPool;
-    ChildPolicyWrapper childPolicyWrapper;
+    private final RouteLookupResponse response;
+    @Nullable
+    private final String headerData;
+    private final long expireTime;
+    private final long staleTime;
+    private final ChildPolicyWrapper childPolicyWrapper;
 
     DataCacheEntry(RouteLookupRequest request, final RouteLookupResponse response) {
       super(request);
       this.response = checkNotNull(response, "response");
       headerData = response.getHeaderData();
 
-      childPolicyWrapperPool = ChildPolicyWrapper.createOrGet(response.getTarget());
-      childPolicyWrapper = childPolicyWrapperPool.getObject();
+      childPolicyWrapper = ChildPolicyWrapper.createOrGet(response.getTarget());
       long now = ticker.nowInMillis();
       expireTime = now + maxAgeMillis;
       staleTime = now + staleAgeMillis;
@@ -567,9 +565,7 @@ final class AsyncCachingRlsClient {
     void cleanup() {
       System.out.println("data entry expired: " + request);
       if (childPolicyWrapper != null) {
-        childPolicyWrapperPool.returnObject(childPolicyWrapper);
-        childPolicyWrapperPool = null;
-        childPolicyWrapper = null;
+        childPolicyWrapper.release();
       }
     }
 

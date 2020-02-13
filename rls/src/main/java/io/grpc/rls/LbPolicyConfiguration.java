@@ -38,6 +38,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.logging.Logger;
 
 /**
  * A LbPolicyConfiguration is configuration for RLS to delegate request to other LB implementations.
@@ -62,27 +63,30 @@ final class LbPolicyConfiguration {
 
   static final class ChildPolicyWrapper implements Closeable {
 
-    private static final Map<String /* target */, ObjectPool<ChildPolicyWrapper>> childPolicyMap =
-        new HashMap<>();
+    private static final Logger logger = Logger.getLogger(ChildPolicyWrapper.class.getName());
+
+    private static final Map<String /* target */, RefCountedObjectPool<ChildPolicyWrapper>>
+        childPolicyMap = new HashMap<>();
     private final String target;
     private LoadBalancingPolicy childPolicy;
     private ConnectivityState connectivityState;
     private Subchannel subchannel;
+    private boolean closed;
 
     private ChildPolicyWrapper(String target) {
       this.target = target;
     }
 
-    public static ObjectPool<ChildPolicyWrapper> createOrGet(String target) {
+    public static ChildPolicyWrapper createOrGet(String target) {
       ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(target);
       if (existing != null) {
-        return existing;
+        return existing.getObject();
       }
       ChildPolicyWrapper childPolicyWrapper = new ChildPolicyWrapper(target);
       RefCountedObjectPool<ChildPolicyWrapper> wrapper =
           RefCountedObjectPool.of(childPolicyWrapper);
       childPolicyMap.put(target, wrapper);
-      return wrapper;
+      return wrapper.getObject();
     }
 
     public String getTarget() {
@@ -113,10 +117,6 @@ final class LbPolicyConfiguration {
       }
     }
 
-    public ChildPolicyWrapper acquire() {
-      return childPolicyMap.get(target).getObject();
-    }
-
     public void release() {
       ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(target);
       checkState(existing != null, "doesn't exists!");
@@ -126,8 +126,26 @@ final class LbPolicyConfiguration {
     @Override
     public void close() {
       // this might be error prone, if closed is called out side of release.
+      closed = true;
       childPolicy = null;
       connectivityState = null;
+      subchannel.shutdown();
+      subchannel = null;
+    }
+
+    @Override
+    protected void finalize() throws Throwable {
+      if (!closed) {
+        RefCountedObjectPool<ChildPolicyWrapper> pool = childPolicyMap.get(target);
+        if (pool != null) {
+          long refCnt = pool.refCnt.get();
+          logger.warning(
+              String.format(
+                  "ChildPolicyWrapper(target=%s) is garbage collected with refCnt=%d",
+                  target,
+                  refCnt));
+        }
+      }
     }
 
     @Override
