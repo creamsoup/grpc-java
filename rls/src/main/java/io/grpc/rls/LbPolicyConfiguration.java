@@ -22,7 +22,7 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import io.grpc.ConnectivityState;
-import io.grpc.LoadBalancer.Subchannel;
+import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.LoadBalancerRegistry;
 import io.grpc.internal.AtomicBackoff;
@@ -70,7 +70,8 @@ final class LbPolicyConfiguration {
     private final String target;
     private LoadBalancingPolicy childPolicy;
     private ConnectivityState connectivityState;
-    private Subchannel subchannel;
+    // private Subchannel subchannel;
+    private SubchannelPicker picker;
     private boolean closed;
 
     private ChildPolicyWrapper(String target) {
@@ -105,17 +106,26 @@ final class LbPolicyConfiguration {
       return connectivityState;
     }
 
-    public void setSubchannel(Subchannel subchannel) {
-      this.subchannel = checkNotNull(subchannel, "subchannel");
+    public void setPicker(SubchannelPicker picker) {
+      this.picker = checkNotNull(picker, "picker");
     }
 
-    public void setConnectivityState(ConnectivityState connectivityState) {
-      System.out.println("connectivity changed");
-      this.connectivityState = connectivityState;
-      if (connectivityState == ConnectivityState.READY) {
-        checkState(subchannel != null, "???");
-      }
+    public SubchannelPicker getPicker() {
+      return picker;
     }
+
+    // public void setSubchannel(Subchannel subchannel) {
+    //   this.subchannel = checkNotNull(subchannel, "subchannel");
+    // }
+    //
+    public void setConnectivityState(ConnectivityState connectivityState) {
+      System.out.println("connectivity changed to " +connectivityState);
+      this.connectivityState = connectivityState;
+    }
+    //
+    // public Subchannel getSubchannel() {
+    //   return subchannel;
+    // }
 
     public void release() {
       ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(target);
@@ -129,8 +139,8 @@ final class LbPolicyConfiguration {
       closed = true;
       childPolicy = null;
       connectivityState = null;
-      subchannel.shutdown();
-      subchannel = null;
+      // subchannel.shutdown();
+      // subchannel = null;
     }
 
     @Override
@@ -167,17 +177,14 @@ final class LbPolicyConfiguration {
       return Objects.hashCode(childPolicyMap, target, childPolicy, connectivityState);
     }
 
-    public Subchannel getSubchannel() {
-      return subchannel;
-    }
-
     @Override
     public String toString() {
       return MoreObjects.toStringHelper(this)
           .add("target", target)
           .add("childPolicy", childPolicy)
           .add("connectivityState", connectivityState)
-          .add("subchannel", subchannel)
+          .add("picker", picker)
+          // .add("subchannel", subchannel)
           .toString();
     }
   }

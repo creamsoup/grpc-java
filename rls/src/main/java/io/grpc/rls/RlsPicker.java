@@ -78,17 +78,11 @@ public class RlsPicker extends SubchannelPicker {
         subchannelStateManager.registerOobState(newState);
       }
     });
-    rlsClient.addSubchannelStateListener(new RlsSubchannelStateListener() {
-
-      @Override
-      void onSubchannelStateChange(String name, ConnectivityState newState) {
-        subchannelStateManager.registerNewState(name, newState);
-        // potentially move this to the manager
-        RlsPicker.this.helper
-            .updateBalancingState(subchannelStateManager.getAggregatedState(), RlsPicker.this);
-      }
-    });
     System.out.println("rls picker created");
+  }
+
+  public RlsSubchannelStateManager getSubchannelStateManager() {
+    return subchannelStateManager;
   }
 
   @Override
@@ -111,7 +105,7 @@ public class RlsPicker extends SubchannelPicker {
       ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
       System.out.println(">>>> valid data! subchannel state: "
           + childPolicyWrapper.getConnectivityState());
-      return PickResult.withSubchannel(childPolicyWrapper.getSubchannel());
+      return childPolicyWrapper.getPicker().pickSubchannel(args);
     } else if (response.hasError()) {
       System.out.println(">>>> error");
       return handleError(response.getStatus());

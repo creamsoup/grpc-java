@@ -14,6 +14,7 @@ final class GrpclbConfig  {
   private final String target;
 
   private GrpclbConfig(Mode mode, @Nullable String target) {
+    System.out.println("grpclb config, mode: " + mode + " target: " + target);
     this.mode = checkNotNull(mode, "mode");
     this.target = target;
   }

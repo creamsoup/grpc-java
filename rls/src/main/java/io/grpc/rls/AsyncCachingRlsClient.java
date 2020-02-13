@@ -26,13 +26,16 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import io.grpc.ConnectivityState;
 import io.grpc.ConnectivityStateInfo;
-import io.grpc.LoadBalancer.CreateSubchannelArgs;
+import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.Helper;
+import io.grpc.LoadBalancer.ResolvedAddresses;
 import io.grpc.LoadBalancer.Subchannel;
+import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancer.SubchannelStateListener;
+import io.grpc.LoadBalancerProvider;
+import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
 import io.grpc.internal.AtomicBackoff;
-import io.grpc.internal.ObjectPool;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc.RouteLookupServiceStub;
 import io.grpc.rls.AdaptiveThrottler.SystemTicker;
@@ -46,6 +49,8 @@ import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import io.grpc.rls.RlsProtoData.RouteLookupResponse;
 import io.grpc.rls.Throttler.ThrottledException;
 import io.grpc.stub.StreamObserver;
+import io.grpc.util.ForwardingLoadBalancerHelper;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -91,13 +96,12 @@ final class AsyncCachingRlsClient {
   private final long maxSizeBytes;
   private final long initialBackoffTimeMillis;
   private final long backoffExpirationTimeMillis;
-  private final Helper helper;
+  private final ChildLoadBalancerHelper helper;
   private final LbPolicyConfiguration lbPolicyConfig;
   private final Subchannel subchannel;
 
   @Nullable
   private RouteLookupServiceStub stub;
-  private RlsSubchannelStateListener rlsSubchannelStateListener;
   private RlsSubchannelStateListener oobChannelStateListener;
 
   // TODO: possibly have a sorted map of expire entry to proactively cleanup.
@@ -298,11 +302,6 @@ final class AsyncCachingRlsClient {
                 new AtomicBackoff("rls:" + request.getServer(), initialBackoffTimeMillis)));
       }
     }
-  }
-
-  public void addSubchannelStateListener(RlsSubchannelStateListener rlsSubchannelStateListener) {
-    this.rlsSubchannelStateListener =
-        checkNotNull(rlsSubchannelStateListener, "rlsSubchannelStateListener");
   }
 
   public void addOobChannelStateListener(RlsSubchannelStateListener oobChannelStateListener) {
@@ -515,28 +514,44 @@ final class AsyncCachingRlsClient {
           + " childPolicy: " + childPolicyWrapper
           + " server: " + request.getServer());
 
-      if (childPolicyWrapper.getSubchannel() == null) {
+      if (childPolicyWrapper.getPicker() == null) {
         // set picker etc
         childPolicyWrapper.setChildPolicy(lbPolicyConfig.getLoadBalancingPolicy());
-        final Subchannel subchannel = helper.createSubchannel(
-            CreateSubchannelArgs.newBuilder()
-                .setAddresses(RlsUtil.createEag(response.getTarget()))
+        // TODO may need to pass wrapped helper
+        LoadBalancerProvider lbProvider = childPolicyWrapper
+            .getChildPolicy()
+            .getEffectiveLbProvider();
+        LoadBalancer lb =
+            lbProvider.newLoadBalancer(new ChildPolicyReportingHelper(helper, childPolicyWrapper));
+        ConfigOrError lbConfig = lbProvider
+            .parseLoadBalancingPolicyConfig(
+                childPolicyWrapper.getChildPolicy().getEffectiveChildPolicy(response.getTarget()));
+        lb.requestConnection();
+        lb.handleResolvedAddresses(
+            ResolvedAddresses.newBuilder()
+                .setAddresses(Collections.singletonList(RlsUtil.createEag(response.getTarget())))
+                .setLoadBalancingPolicyConfig(lbConfig.getConfig())
                 .build());
-        childPolicyWrapper.setSubchannel(subchannel);
-        System.out.println(
-            "subchannel created response: " + response + "  created subchannel: " + subchannel);
-        subchannel.start(new SubchannelStateListener() {
-          @Override
-          public void onSubchannelState(ConnectivityStateInfo newState) {
-            System.out.println("backend subchannel state changed: " + newState);
-            childPolicyWrapper.setConnectivityState(newState.getState());
-            if (rlsSubchannelStateListener != null) {
-              rlsSubchannelStateListener
-                  .onSubchannelStateChange(response.getTarget(), newState.getState());
-            }
-          }
-        });
-        subchannel.requestConnection();
+
+        // final Subchannel subchannel = helper.createSubchannel(
+        //     CreateSubchannelArgs.newBuilder()
+        //         .setAddresses(RlsUtil.createEag(response.getTarget()))
+        //         .build());
+        // childPolicyWrapper.setSubchannel(subchannel);
+        // System.out.println(
+        //     "subchannel created response: " + response + "  created subchannel: " + subchannel);
+        // subchannel.start(new SubchannelStateListener() {
+        //   @Override
+        //   public void onSubchannelState(ConnectivityStateInfo newState) {
+        //     System.out.println("backend subchannel state changed: " + newState);
+        //     childPolicyWrapper.setConnectivityState(newState.getState());
+        //     if (rlsSubchannelStateListener != null) {
+        //       rlsSubchannelStateListener
+        //           .onSubchannelStateChange(response.getTarget(), newState.getState());
+        //     }
+        //   }
+        // });
+        // subchannel.requestConnection();
       } else {
         System.out.println("woohoo reusing child policy! " + childPolicyWrapper);
       }
@@ -761,7 +776,7 @@ final class AsyncCachingRlsClient {
   /** A Builder for {@link AsyncCachingRlsClient}. */
   public static final class Builder {
 
-    private Helper helper;
+    private ChildLoadBalancerHelper helper;
     private LbPolicyConfiguration lbPolicyConfig;
     private ScheduledExecutorService scheduledExecutorService;
     private Executor executor;
@@ -834,7 +849,7 @@ final class AsyncCachingRlsClient {
       return this;
     }
 
-    public Builder setHelper(Helper helper) {
+    public Builder setHelper(ChildLoadBalancerHelper helper) {
       this.helper = checkNotNull(helper, "helper");
       return this;
     }
@@ -851,6 +866,34 @@ final class AsyncCachingRlsClient {
 
     public AsyncCachingRlsClient build() {
       return new AsyncCachingRlsClient(this);
+    }
+  }
+
+
+  private static class ChildPolicyReportingHelper extends ForwardingLoadBalancerHelper {
+
+    private final ChildLoadBalancerHelper delegate;
+    private final ChildPolicyWrapper childPolicyWrapper;
+
+    public ChildPolicyReportingHelper(
+        ChildLoadBalancerHelper delegate,
+        ChildPolicyWrapper childPolicyWrapper) {
+      this.delegate = checkNotNull(delegate, "delegate");
+      this.childPolicyWrapper = checkNotNull(childPolicyWrapper, "childPolicyWrapper");
+    }
+
+    @Override
+    protected Helper delegate() {
+      return delegate;
+    }
+
+    @Override
+    public void updateBalancingState(ConnectivityState newState, SubchannelPicker newPicker) {
+      System.out.println("CPRH: updating balancing status " + newState + " " + newPicker);
+      childPolicyWrapper.setPicker(newPicker);
+      childPolicyWrapper.setConnectivityState(newState);
+      delegate.updateLbState(childPolicyWrapper.getTarget(), newState);
+      super.updateBalancingState(newState, newPicker);
     }
   }
 }

@@ -71,6 +71,7 @@ class RlsLoadBalancer extends LoadBalancer {
               .setAddresses(eag)
               .build());
       AdaptiveThrottler throttler = AdaptiveThrottler.builder().build();
+      ChildLoadBalancerHelper childBalancerHelper = new ChildLoadBalancerHelper(helper);
       final AsyncCachingRlsClient client =
           AsyncCachingRlsClient.newBuilder()
               .setSubchannel(rlsServerChannel)
@@ -81,12 +82,13 @@ class RlsLoadBalancer extends LoadBalancer {
               .setMaxCacheSizeBytes(rlsConfig.getCacheSizeBytes())
               .setCallTimeoutMillis(rlsConfig.getLookupServiceTimeoutInMillis())
               .setThrottler(throttler)
-              .setHelper(helper)
+              .setHelper(childBalancerHelper)
               .setLbPolicyConfig(lbPolicyConfiguration)
               .build();
       routeLookupClient = client;
       // rls picker will report to helper
-      new RlsPicker(lbPolicyConfiguration, client, helper);
+      RlsPicker rlsPicker = new RlsPicker(lbPolicyConfiguration, client, helper);
+      childBalancerHelper.setRlsPicker(rlsPicker);
     }
     // TODO(creamsoup) update configs if necessary (maybe easier to create new cache?)
     //  for v1 implementation this is not required.
