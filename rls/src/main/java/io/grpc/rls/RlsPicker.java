@@ -101,14 +101,16 @@ public class RlsPicker extends SubchannelPicker {
     }
 
     String[] methodName = args.getMethodDescriptor().getFullMethodName().split("/", 2);
-    RouteLookupRequest request = requestFactory.create(methodName[0], methodName[1], args.getHeaders());
+    RouteLookupRequest request =
+        requestFactory.create(methodName[0], methodName[1], args.getHeaders());
     System.out.println("pick request: " + request);
     final CachedResponse response = rlsClient.get(request);
     System.out.println("response: " + response);
 
     if (response.hasValidData()) {
       ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
-      System.out.println(">>>> valid data! subchannel state: " + childPolicyWrapper.getConnectivityState());
+      System.out.println(">>>> valid data! subchannel state: "
+          + childPolicyWrapper.getConnectivityState());
       return PickResult.withSubchannel(childPolicyWrapper.getSubchannel());
     } else if (response.hasError()) {
       System.out.println(">>>> error");
@@ -126,10 +128,9 @@ public class RlsPicker extends SubchannelPicker {
         System.out.println("with error");
         return PickResult.withError(cause);
       case SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR:
-        return useFallbackSubchannel(/* blocking= */ true);
-        // fall-through
+        return useFallbackSubchannel(/* args= */ null, /* blocking= */ true);
       case ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS:
-        return useFallbackSubchannel(/* blocking= */ false);
+        return useFallbackSubchannel(/* args= */ null, /* blocking= */ false);
     }
     throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
   }
@@ -140,10 +141,10 @@ public class RlsPicker extends SubchannelPicker {
         return PickResult.withNoResult();
       case SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR:
         // pick queue
-        return useFallbackSubchannel(/* blocking= */ true);
+        return useFallbackSubchannel(args, /* blocking= */ true);
       case ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS:
         // use default target
-        return useFallbackSubchannel(/* blocking= */ false);
+        return useFallbackSubchannel(args, /* blocking= */ false);
     }
     throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
   }
@@ -153,8 +154,8 @@ public class RlsPicker extends SubchannelPicker {
   private Status fallbackChannelStatus;
 
   /** Uses Subchannel connected to default target. */
-  private PickResult useFallbackSubchannel(boolean blocking) {
-    System.out.println("use fallback! blocking: " + blocking);
+  private PickResult useFallbackSubchannel(PickSubchannelArgs args, boolean blocking) {
+    System.out.println("use fallback! blocking: " + blocking + " args: " + args);
     CountDownLatch readyLatch = maybeStartFallbackChannel();
     if (blocking) {
       System.out.println("waiting to be connected");
@@ -243,7 +244,8 @@ public class RlsPicker extends SubchannelPicker {
       if (existing != null) {
         stateMultiset.remove(existing);
       }
-      System.out.println("new State registered: " + name + " " + newState + " / aggState: " + getAggregatedState());
+      System.out.println("new State registered: " + name + " " + newState
+          + " / aggState: " + getAggregatedState());
     }
 
     @Nullable

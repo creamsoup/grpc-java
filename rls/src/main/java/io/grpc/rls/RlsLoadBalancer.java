@@ -19,13 +19,11 @@ package io.grpc.rls;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import io.grpc.ChannelLogger.ChannelLogLevel;
-import io.grpc.ConnectivityState;
 import io.grpc.EquivalentAddressGroup;
 import io.grpc.ExperimentalApi;
 import io.grpc.LoadBalancer;
 import io.grpc.Status;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
-import java.net.InetSocketAddress;
 
 @ExperimentalApi("TODO")
 class RlsLoadBalancer extends LoadBalancer {
@@ -34,8 +32,6 @@ class RlsLoadBalancer extends LoadBalancer {
   private LbPolicyConfiguration lbPolicyConfiguration;
   private AsyncCachingRlsClient routeLookupClient;
   private Subchannel rlsServerChannel;
-  private AdaptiveThrottler throttler = AdaptiveThrottler.builder().build();
-  private RlsPicker picker;
 
   RlsLoadBalancer(Helper helper) {
     System.out.println("creating new RLSLB");
@@ -74,7 +70,7 @@ class RlsLoadBalancer extends LoadBalancer {
           CreateSubchannelArgs.newBuilder()
               .setAddresses(eag)
               .build());
-      throttler = AdaptiveThrottler.builder().build();
+      AdaptiveThrottler throttler = AdaptiveThrottler.builder().build();
       final AsyncCachingRlsClient client =
           AsyncCachingRlsClient.newBuilder()
               .setSubchannel(rlsServerChannel)
@@ -89,7 +85,8 @@ class RlsLoadBalancer extends LoadBalancer {
               .setLbPolicyConfig(lbPolicyConfiguration)
               .build();
       routeLookupClient = client;
-      picker = new RlsPicker(lbPolicyConfiguration, client, helper);
+      // rls picker will report to helper
+      new RlsPicker(lbPolicyConfiguration, client, helper);
     }
 
     this.lbPolicyConfiguration = lbPolicyConfiguration;

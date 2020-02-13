@@ -57,9 +57,9 @@ import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 
 /**
- * An AsyncRlsCache is a cache for rls service. All the methods in this class are non
- * blocking. This async behavior is reflected to the {@link #get(RouteLookupRequest)} method, when the
- * cache is requested but not fully populated, it returns uncompleted {@link ListenableFuture} which
+ * An AsyncRlsCache is a cache for rls service. All the methods in this class are non blocking.
+ * This async behavior is reflected to the {@link #get(RouteLookupRequest)} method, when the cache
+ * is requested but not fully populated, it returns uncompleted {@link ListenableFuture} which
  * allows the users to wait or ignore until the computation is completed.
  *
  * <p>On top of regular cache behavior, it supports max age and stale state of cache value. The key
@@ -190,6 +190,7 @@ final class AsyncCachingRlsClient {
             }
           }
         }
+        return;
       case TRANSIENT_FAILURE:
         System.out.println("channel failing");
         return;
@@ -220,7 +221,7 @@ final class AsyncCachingRlsClient {
 
           @Override
           public void onError(Throwable t) {
-            System.out.println("on ERROR in asyncCall: " + stub);
+            System.out.println("on ERROR in asyncCall");
             t.printStackTrace();
             response.setException(t);
             throttler.registerBackendResponse(false);
@@ -300,7 +301,8 @@ final class AsyncCachingRlsClient {
   }
 
   public void addSubchannelStateListener(RlsSubchannelStateListener rlsSubchannelStateListener) {
-    this.rlsSubchannelStateListener = checkNotNull(rlsSubchannelStateListener, "rlsSubchannelStateListener");
+    this.rlsSubchannelStateListener =
+        checkNotNull(rlsSubchannelStateListener, "rlsSubchannelStateListener");
   }
 
   public void addOobChannelStateListener(RlsSubchannelStateListener oobChannelStateListener) {
@@ -510,7 +512,10 @@ final class AsyncCachingRlsClient {
       expireTime = now + maxAgeMillis;
       staleTime = now + staleAgeMillis;
       linkedHashLruCache.updateEntrySize(request);
-      System.out.println("data entry request: " + request + " response: " + response + " childPolicy: " + childPolicyWrapper + " server: " + request.getServer());
+      System.out.println("data entry request: " + request
+          + " response: " + response
+          + " childPolicy: " + childPolicyWrapper
+          + " server: " + request.getServer());
 
       if (childPolicyWrapper.getSubchannel() == null) {
         // set picker etc
@@ -569,8 +574,8 @@ final class AsyncCachingRlsClient {
     }
 
     /**
-     * Refreshes cache entry, and replacing it immediately. Replaced cache entry will serve the staled
-     * value until old cache is expired or new value is available whichever happens first.
+     * Refreshes cache entry, and replacing it immediately. Replaced cache entry will serve the
+     * staled value until old cache is expired or new value is available whichever happens first.
      *
      * <pre>
      * Timeline                       | async refresh
@@ -595,6 +600,7 @@ final class AsyncCachingRlsClient {
       return isExpired(ticker.nowInMillis());
     }
 
+    @Override
     boolean isExpired(long now) {
       return expireTime <= now;
     }
@@ -640,7 +646,9 @@ final class AsyncCachingRlsClient {
           },
           Math.min(backoffState.get(), backoffExpirationTimeMillis),
           TimeUnit.MILLISECONDS);
-      System.out.println("Error entry: " + request + " status: " + status + " backoff time: " + backoffState.get());
+      System.out.println("Error entry: " + request
+          + " status: " + status
+          + " backoff time: " + backoffState.get());
     }
 
     public void forceRefresh() {
@@ -669,9 +677,10 @@ final class AsyncCachingRlsClient {
             linkedHashLruCache.cache(request, new DataCacheEntry(request, response));
           } catch (Exception e) {
             System.out.println("transition to backoff " + request);
+            AtomicBackoff backoff = new AtomicBackoff("backoff for " + request, backoffState.get());
             linkedHashLruCache.cache(
                 request,
-                new BackoffCacheEntry(request, Status.fromThrowable(e), new AtomicBackoff("backoff for " + request, backoffState.get())));
+                new BackoffCacheEntry(request, Status.fromThrowable(e), backoff));
           }
         }
       }
