@@ -411,12 +411,12 @@ subprojects {
 
         plugins.withId("java") {
             task javadocJar(type: Jar) {
-                classifier = 'javadoc'
+                getArchiveClassifier().set('javadoc')
                 from javadoc
             }
 
             task sourcesJar(type: Jar) {
-                classifier = 'sources'
+                getArchiveClassifier().set('sources')
                 from sourceSets.main.allSource
             }
 
@@ -463,7 +463,7 @@ subprojects {
         // Add a japicmp task that compares the current .jar with baseline .jar
         task japicmp(type: me.champeau.gradle.japicmp.JapicmpTask, dependsOn: jar) {
             oldClasspath = files(baselineArtifact)
-            newClasspath = files(jar.archivePath)
+            newClasspath = files(jar.archiveFile)
             onlyBinaryIncompatibleModified = false
             // Be quiet about things that did not change
             onlyModified = true

@@ -4,6 +4,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.protobuf.Duration;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
+import io.grpc.NameResolverRegistry;
 import io.grpc.internal.JsonParser;
 import io.grpc.lookup.v1.BackendServiceGrpc;
 import io.grpc.lookup.v1.BackendServiceGrpc.BackendServiceBlockingStub;
@@ -28,16 +29,20 @@ public class Client {
   }
 
   static void runClient() throws Exception {
+    // client will use localhost:12345 from RlsServer
+    // fallback will be on 12346
+
+    NameResolverRegistry.getDefaultRegistry().register(new FakeNameResolverProvider());
     ManagedChannel clientChannel =
         NettyChannelBuilder
             // this will be ignored
-            .forTarget("localhost")
+            .forTarget("fake-rls:///localhost")
             .defaultServiceConfig(getServiceConfig())
             .disableServiceConfigLookUp()
             .usePlaintext()
             .build();
     ManagedChannel rlsControlChannel = NettyChannelBuilder
-        .forAddress("localhost", 8972)
+        .forTarget("dns:///localhost:8972")
         .usePlaintext()
         .build();
     CachedRouteLookupServiceBlockingStub rlsControlStub =
@@ -49,7 +54,7 @@ public class Client {
             "grpc.lookup.v1.BackendService",
             "Echo",
             Collections.<String, String>emptyMap());
-    RouteLookupResponse response1 = createResponse("localhost:9001", "bar");
+    RouteLookupResponse response1 = createResponse("backend9001", "bar");
     rlsControlStub.registerReturnValue(createCacheRequest(request1, response1, 10));
     System.out.println("register request1 response1 done");
 
@@ -59,7 +64,7 @@ public class Client {
             "grpc.lookup.v1.BackendService",
             "Echo",
             ImmutableMap.of("user", "creamsoup"));
-    RouteLookupResponse response2 = createResponse("localhost:9002", "baz");
+    RouteLookupResponse response2 = createResponse("backend9002and3", "baz");
     rlsControlStub.registerReturnValue(createCacheRequest(request2, response2, 100));
     System.out.println("register request2 response2 done");
 
@@ -133,13 +138,13 @@ public class Client {
   @SuppressWarnings("unchecked")
   private static Map<String, Object> getServiceConfig() throws IOException {
     String rlsConfigJson = getRlsConfigJsonStr();
-    String grpclbJson = "{\"grpclb\": {\"childPolicy\": [{\"round_robin\": {}}]}}";
+    String grpclbJson = "{\"grpclb\": {\"childPolicy\": [{\"pick_first\": {}}]}}";
     String serviceConfig = "{"
         + "\"loadBalancingConfig\": [{"
         + "    \"rls\": {"
         + "      \"routeLookupConfig\": " + rlsConfigJson + ", "
         + "      \"childPolicy\": [" + grpclbJson + "],"
-        + "      \"childPolicyConfigTargetFieldName\": \"targetName\""
+        + "      \"childPolicyConfigTargetFieldName\": \"serviceName\""
         + "      }"
         + "  }]"
         + "}";
@@ -196,7 +201,7 @@ public class Client {
           + "  \"staleAge\": 240,\n"
           + "  \"validTargets\": [\"localhost:9001\", \"localhost:9002\"],"
           + "  \"cacheSizeBytes\": 1000,\n"
-          + "  \"defaultTarget\": \"localhost:9003\",\n"
+          + "  \"defaultTarget\": \"localhost:12346\",\n"
           + "  \"requestProcessingStrategy\": \"ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS\"\n"
           + "}";
   }

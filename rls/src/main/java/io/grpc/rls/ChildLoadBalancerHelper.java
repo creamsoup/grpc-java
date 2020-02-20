@@ -37,6 +37,7 @@ public final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper 
   }
 
   public void updateLbState(String target, ConnectivityState state) {
+    System.out.println("CLBH: updating lb state: " +target + " / " + state);
     rlsPicker.getSubchannelStateManager().registerNewState(target, state);
   }
 }

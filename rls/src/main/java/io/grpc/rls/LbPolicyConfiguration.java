@@ -25,6 +25,7 @@ import io.grpc.ConnectivityState;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.LoadBalancerRegistry;
+import io.grpc.Status;
 import io.grpc.internal.AtomicBackoff;
 import io.grpc.internal.ObjectPool;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
@@ -39,6 +40,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
+import javax.annotation.Nullable;
 
 /**
  * A LbPolicyConfiguration is configuration for RLS to delegate request to other LB implementations.
@@ -69,7 +71,7 @@ final class LbPolicyConfiguration {
         childPolicyMap = new HashMap<>();
     private final String target;
     private LoadBalancingPolicy childPolicy;
-    private ConnectivityState connectivityState;
+    private ConnectivityState connectivityState = ConnectivityState.IDLE;
     // private Subchannel subchannel;
     private SubchannelPicker picker;
     private boolean closed;

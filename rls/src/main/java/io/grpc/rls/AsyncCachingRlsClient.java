@@ -27,8 +27,8 @@ import com.google.common.util.concurrent.SettableFuture;
 import io.grpc.ConnectivityState;
 import io.grpc.ConnectivityStateInfo;
 import io.grpc.LoadBalancer;
+import io.grpc.LoadBalancer.CreateSubchannelArgs;
 import io.grpc.LoadBalancer.Helper;
-import io.grpc.LoadBalancer.ResolvedAddresses;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancer.SubchannelStateListener;
@@ -43,6 +43,7 @@ import io.grpc.rls.AdaptiveThrottler.Ticker;
 import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.LruCache.EvictionListener;
 import io.grpc.rls.LruCache.EvictionType;
+import io.grpc.rls.RlsLoadBalancer.ChildLbResolvedAddressFactory;
 import io.grpc.rls.RlsPicker.RlsSubchannelStateListener;
 import io.grpc.rls.RlsProtoConverters.RouteLookupResponseConverter;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
@@ -50,7 +51,7 @@ import io.grpc.rls.RlsProtoData.RouteLookupResponse;
 import io.grpc.rls.Throttler.ThrottledException;
 import io.grpc.stub.StreamObserver;
 import io.grpc.util.ForwardingLoadBalancerHelper;
-import java.util.Collections;
+import io.grpc.util.ForwardingSubchannel;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -99,6 +100,7 @@ final class AsyncCachingRlsClient {
   private final ChildLoadBalancerHelper helper;
   private final LbPolicyConfiguration lbPolicyConfig;
   private final Subchannel subchannel;
+  private final ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
 
   @Nullable
   private RouteLookupServiceStub stub;
@@ -107,7 +109,7 @@ final class AsyncCachingRlsClient {
   // TODO: possibly have a sorted map of expire entry to proactively cleanup.
 
   // TODO: use builder (possibly make a copy constructor as well for
-  AsyncCachingRlsClient(Builder builder) {
+  AsyncCachingRlsClient(final Builder builder) {
     this.scheduledExecutorService =
         checkNotNull(builder.scheduledExecutorService, "scheduledExecutorService");
     this.executor = checkNotNull(builder.executor, "executor");
@@ -154,18 +156,28 @@ final class AsyncCachingRlsClient {
     this.helper = checkNotNull(builder.helper, "helper");
     this.lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
     this.subchannel = checkNotNull(builder.subchannel, "subchannel");
-    builder.subchannel.start(new SubchannelStateListener() {
-      @Override
-      public void onSubchannelState(ConnectivityStateInfo newState) {
-        // TODO(creamsoup) somehow report OOB channel
-        System.out.println("Update OOB subchannel: " + newState.getState());
-        handleRlsServerChannelStatus(newState.getState());
-        if (oobChannelStateListener != null) {
-          oobChannelStateListener.onSubchannelStateChange("oobChannel", newState.getState());
-        }
-      }
-    });
-    subchannel.requestConnection();
+    helper.getSynchronizationContext().execute(
+        new Runnable() {
+          @Override
+          public void run() {
+            builder.subchannel.start(new SubchannelStateListener() {
+              @Override
+              public void onSubchannelState(ConnectivityStateInfo newState) {
+                // TODO(creamsoup) somehow report OOB channel
+                System.out.println("Update OOB subchannel: " + newState.getState());
+                handleRlsServerChannelStatus(newState.getState());
+                if (oobChannelStateListener != null) {
+                  oobChannelStateListener
+                      .onSubchannelStateChange("oobChannel", newState.getState());
+                }
+              }
+            });
+            subchannel.requestConnection();
+          }
+        });
+    helper.getSynchronizationContext().drain();
+    this.childLbResolvedAddressFactory =
+        checkNotNull(builder.childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
   }
 
   /** Returns a Builder for {@link AsyncCachingRlsClient}. */
@@ -515,23 +527,24 @@ final class AsyncCachingRlsClient {
           + " server: " + request.getServer());
 
       if (childPolicyWrapper.getPicker() == null) {
+        //TODO refactor this to util method (so fallback can also use it)
         // set picker etc
         childPolicyWrapper.setChildPolicy(lbPolicyConfig.getLoadBalancingPolicy());
         // TODO may need to pass wrapped helper
         LoadBalancerProvider lbProvider = childPolicyWrapper
             .getChildPolicy()
             .getEffectiveLbProvider();
+        ChildPolicyReportingHelper childPolicyReportingHelper =
+            new ChildPolicyReportingHelper(helper, childPolicyWrapper);
         LoadBalancer lb =
-            lbProvider.newLoadBalancer(new ChildPolicyReportingHelper(helper, childPolicyWrapper));
+            lbProvider.newLoadBalancer(childPolicyReportingHelper);
+        childPolicyReportingHelper.setLb(lb);
+
         ConfigOrError lbConfig = lbProvider
             .parseLoadBalancingPolicyConfig(
                 childPolicyWrapper.getChildPolicy().getEffectiveChildPolicy(response.getTarget()));
+        lb.handleResolvedAddresses(childLbResolvedAddressFactory.create(lbConfig.getConfig()));
         lb.requestConnection();
-        lb.handleResolvedAddresses(
-            ResolvedAddresses.newBuilder()
-                .setAddresses(Collections.singletonList(RlsUtil.createEag(response.getTarget())))
-                .setLoadBalancingPolicyConfig(lbConfig.getConfig())
-                .build());
 
         // final Subchannel subchannel = helper.createSubchannel(
         //     CreateSubchannelArgs.newBuilder()
@@ -790,6 +803,7 @@ final class AsyncCachingRlsClient {
     private Throttler throttler = new HappyThrottler();
     private EvictionListener<RouteLookupRequest, CacheEntry> evictionListener = null;
     private Subchannel subchannel;
+    private ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
 
     public Builder setScheduledExecutorService(
         ScheduledExecutorService scheduledExecutorService) {
@@ -867,13 +881,20 @@ final class AsyncCachingRlsClient {
     public AsyncCachingRlsClient build() {
       return new AsyncCachingRlsClient(this);
     }
+
+    public Builder setChildLbResolvedAddressesFactory(
+        ChildLbResolvedAddressFactory childLbResolvedAddressFactory) {
+      this.childLbResolvedAddressFactory =
+          checkNotNull(childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
+      return this;
+    }
   }
 
-
-  private static class ChildPolicyReportingHelper extends ForwardingLoadBalancerHelper {
+  static class ChildPolicyReportingHelper extends ForwardingLoadBalancerHelper {
 
     private final ChildLoadBalancerHelper delegate;
     private final ChildPolicyWrapper childPolicyWrapper;
+    private LoadBalancer lb;
 
     public ChildPolicyReportingHelper(
         ChildLoadBalancerHelper delegate,
@@ -887,6 +908,10 @@ final class AsyncCachingRlsClient {
       return delegate;
     }
 
+    void setLb(LoadBalancer lb) {
+      this.lb = checkNotNull(lb, "lb");
+    }
+
     @Override
     public void updateBalancingState(ConnectivityState newState, SubchannelPicker newPicker) {
       System.out.println("CPRH: updating balancing status " + newState + " " + newPicker);
@@ -894,6 +919,31 @@ final class AsyncCachingRlsClient {
       childPolicyWrapper.setConnectivityState(newState);
       delegate.updateLbState(childPolicyWrapper.getTarget(), newState);
       super.updateBalancingState(newState, newPicker);
+    }
+
+    @Override
+    public Subchannel createSubchannel(CreateSubchannelArgs args) {
+      final Subchannel subchannel = super.createSubchannel(args);
+      return new ForwardingSubchannel() {
+        @Override
+        protected Subchannel delegate() {
+          return subchannel;
+        }
+
+        @Override
+        @SuppressWarnings("deprecation")
+        public void start(final SubchannelStateListener listener) {
+          super.start(new SubchannelStateListener() {
+            @Override
+            public void onSubchannelState(ConnectivityStateInfo newState) {
+              if (lb != null) {
+                lb.handleSubchannelState(subchannel, newState);
+              }
+              listener.onSubchannelState(newState);
+            }
+          });
+        }
+      };
     }
   }
 }

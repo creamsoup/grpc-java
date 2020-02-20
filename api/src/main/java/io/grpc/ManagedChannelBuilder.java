@@ -372,7 +372,7 @@ public abstract class ManagedChannelBuilder<T extends ManagedChannelBuilder<T>> 
    * Defaults to {@code false}.
    *
    * <p>Clients must receive permission from the service owner before enabling this option.
-   * Keepalives on unused connections can easilly accidentally consume a considerable amount of
+   * Keepalives on unused connections can easily accidentally consume a considerable amount of
    * bandwidth and CPU. {@link ManagedChannelBuilder#idleTimeout idleTimeout()} should generally be
    * used instead of this option.
    *
