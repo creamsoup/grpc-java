@@ -138,6 +138,7 @@ final class GrpclbState {
 
   @Nullable
   private ManagedChannel lbCommChannel;
+  private boolean lbSentEmptyBackends = false;
 
   @Nullable
   private LbStream lbStream;
@@ -423,6 +424,17 @@ final class GrpclbState {
         subchannels = Collections.unmodifiableMap(newSubchannelMap);
         break;
       case PICK_FIRST:
+        checkState(subchannels.size() <= 1, "Unexpected Subchannel count: %s", subchannels);
+        Subchannel subchannel;
+        System.out.println("new backend addresses: " + newBackendAddrList);
+        if (newBackendAddrList.isEmpty() && subchannels.size() == 1) {
+          // server reported no available backends, going to TRANSIENT_FAILURE.
+          cancelFallbackTimer();
+          subchannel = subchannels.values().iterator().next();
+          subchannel.shutdown();
+          subchannels = Collections.emptyMap();
+          break;
+        }
         List<EquivalentAddressGroup> eagList = new ArrayList<>();
         // Because for PICK_FIRST, we create a single Subchannel for all addresses, we have to
         // attach the tokens to the EAG attributes and use TokenAttachingLoadRecorder to put them on
@@ -438,19 +450,20 @@ final class GrpclbState {
           }
           eagList.add(new EquivalentAddressGroup(origEag.getAddresses(), eagAttrs));
         }
-        Subchannel subchannel;
         if (subchannels.isEmpty()) {
           // TODO(zhangkun83): remove the deprecation suppression on this method once migrated to
           // the new createSubchannel().
+          System.out.println("&&&& creating new channel!!! klk");
           subchannel = helper.createSubchannel(eagList, createSubchannelAttrs());
         } else {
-          checkState(subchannels.size() == 1, "Unexpected Subchannel count: %s", subchannels);
+          System.out.println("&&&& updating address klk");
           subchannel = subchannels.values().iterator().next();
           subchannel.updateAddresses(eagList);
         }
         subchannels = Collections.singletonMap(eagList, subchannel);
         newBackendList.add(
             new BackendEntry(subchannel, new TokenAttachingTracerFactory(loadRecorder)));
+        System.out.println("backendlist: " + newBackendList + "  drop: " + dropList + " sub: " + subchannels);
         break;
       default:
         throw new AssertionError("Missing case for " + config.getMode());
@@ -572,6 +585,7 @@ final class GrpclbState {
         return;
       }
       logger.log(ChannelLogLevel.DEBUG, "Got an LB response: {0}", response);
+      System.out.println("lb response " + response);
 
       LoadBalanceResponseTypeCase typeCase = response.getLoadBalanceResponseTypeCase();
       if (!initialResponseReceived) {
@@ -629,6 +643,7 @@ final class GrpclbState {
       }
       // Stop using fallback backends as soon as a new server list is received from the balancer.
       usingFallbackBackends = false;
+      lbSentEmptyBackends = serverList.getServersList().isEmpty();
       cancelFallbackTimer();
       useRoundRobinLists(newDropList, newBackendAddrList, loadRecorder);
       maybeUpdatePicker();
@@ -729,14 +744,20 @@ final class GrpclbState {
         break;
       case PICK_FIRST:
         if (backendList.isEmpty()) {
-          pickList = Collections.singletonList(BUFFER_ENTRY);
-          // Have not received server addresses
-          state = CONNECTING;
+          if (lbSentEmptyBackends) {
+            pickList = Collections.<RoundRobinEntry>singletonList(new ErrorEntry(Status.UNAVAILABLE.withDescription("LB returned empty address")));
+            state = TRANSIENT_FAILURE;
+          } else {
+            pickList = Collections.singletonList(BUFFER_ENTRY);
+            // Have not received server addresses
+            state = CONNECTING;
+          }
         } else {
           checkState(backendList.size() == 1, "Excessive backend entries: %s", backendList);
           BackendEntry onlyEntry = backendList.get(0);
           ConnectivityStateInfo stateInfo =
               onlyEntry.subchannel.getAttributes().get(STATE_INFO).get();
+          System.out.println("only backend state: " + stateInfo);
           state = stateInfo.getState();
           switch (state) {
             case READY:
@@ -770,11 +791,14 @@ final class GrpclbState {
     // RoundRobinPicker.
     if (picker.dropList.equals(currentPicker.dropList)
         && picker.pickList.equals(currentPicker.pickList)) {
+      System.out.println(1);
       return;
     }
+    System.out.println(2);
     currentPicker = picker;
     logger.log(
         ChannelLogLevel.INFO, "{0}: picks={1}, drops={2}", state, picker.pickList, picker.dropList);
+    System.out.println("state: " + state + " picker " + picker);
     helper.updateBalancingState(state, picker);
   }
 
@@ -914,7 +938,8 @@ final class GrpclbState {
     @Override
     public String toString() {
       // This is printed in logs.  Only give out useful information.
-      return "[" + subchannel.getAllAddresses().toString() + "(" + token + ")]";
+      // This is horrible, because it requires to be in synchronized context
+      return "[" + subchannel.toString() + "(" + token + ")]";
     }
 
     @Override
@@ -1031,6 +1056,7 @@ final class GrpclbState {
 
     @Override
     public PickResult pickSubchannel(PickSubchannelArgs args) {
+      System.out.println("pick subchannel " + args);
       synchronized (pickList) {
         // Two-level round-robin.
         // First round-robin on dropList. If a drop entry is selected, request will be dropped.  If
@@ -1053,6 +1079,7 @@ final class GrpclbState {
         if (pickIndex == pickList.size()) {
           pickIndex = 0;
         }
+        System.out.println("pick: " + pick);
         return pick.picked(args.getHeaders());
       }
     }
