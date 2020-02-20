@@ -40,7 +40,8 @@ public class FakeNameResolver extends NameResolver {
                     io.grpc.internal.GrpcAttributes.ATTR_LB_ADDRS,
                     ImmutableList.of(
                         new EquivalentAddressGroup(
-                            new InetSocketAddress("localhost", 12345),
+                            new InetSocketAddress("localhost", 7777), // for grpclb
+                            // new InetSocketAddress("localhost", 12345), // for rls
                             Attributes.newBuilder()
                                 .set(GrpcAttributes.ATTR_LB_ADDR_AUTHORITY, "localhost")
                                 .build())))
