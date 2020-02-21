@@ -27,6 +27,8 @@ public class TestLoadBalancer {
     targetToBackends.put("backend9001", new Pair<>(new byte[] {127, 0, 0, 1}, 9001));
     targetToBackends.put("backend9002and3", new Pair<>(new byte[] {127, 0, 0, 1}, 9002));
     targetToBackends.put("backend9002and3", new Pair<>(new byte[] {127, 0, 0, 1}, 9003));
+    targetToBackends.put("defaultTarget", new Pair<>(new byte[] {127, 0, 0, 1}, 9005));
+    targetToBackends.put("random", new Pair<>(new byte[] {127, 0, 0, 1}, 9003));
     Server server =
         NettyServerBuilder
             .forPort(port)
@@ -95,7 +97,7 @@ public class TestLoadBalancer {
                           .addAllServers(servers)
                           .build())
                   .build();
-          System.out.println("LB response: " + lbResponse);
+          System.out.println("LB response: " + lbResponse + " from request: " + value);
           responseObserver.onNext(lbResponse);
         }
 

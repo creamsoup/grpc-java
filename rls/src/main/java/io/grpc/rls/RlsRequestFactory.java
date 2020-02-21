@@ -60,7 +60,6 @@ public final class RlsRequestFactory {
         }
       }
     }
-    System.out.println("key builder table: " + table);
     return table;
   }
 
@@ -72,13 +71,10 @@ public final class RlsRequestFactory {
     if (method.charAt(0) == '/') {
       method = method.substring(1);
     }
-    System.out.println("create: " + service + "  / " + method + " / " + metadata);
     Map<String, NameMatcher> keyBuilder = keyBuilderTable.row(service + "/" + method);
-    System.out.println("full matching " + keyBuilder);
     // if no matching keyBuilder found, fall back to wildcard match (ServiceName/*)
     if (keyBuilder.isEmpty()) {
       keyBuilder = keyBuilderTable.row(service + "/*");
-      System.out.println("* matching " + keyBuilder);
     }
     Map<String, String> rlsRequestHeaders = createRequestHeaders(metadata, keyBuilder);
     return new RouteLookupRequest(service, method, "grpc", rlsRequestHeaders);

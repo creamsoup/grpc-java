@@ -22,48 +22,45 @@ import io.grpc.Attributes;
 import io.grpc.ChannelLogger.ChannelLogLevel;
 import io.grpc.ConnectivityStateInfo;
 import io.grpc.EquivalentAddressGroup;
-import io.grpc.ExperimentalApi;
 import io.grpc.LoadBalancer;
 import io.grpc.Status;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import java.util.Collections;
 import java.util.List;
 
-@ExperimentalApi("TODO")
-class RlsLoadBalancer extends LoadBalancer {
+/**
+ * Implementation of {@link LoadBalancer} backed by route lookup service.
+ */
+final class RlsLoadBalancer extends LoadBalancer {
 
   private final Helper helper;
   private LbPolicyConfiguration lbPolicyConfiguration;
   private AsyncCachingRlsClient routeLookupClient;
   private Subchannel rlsServerChannel;
+  private RlsPicker rlsPicker;
 
   RlsLoadBalancer(Helper helper) {
-    System.out.println("creating new RLSLB");
     this.helper = checkNotNull(helper, "helper");
   }
 
   @Override
   @SuppressWarnings("deprecation")
   public void handleSubchannelState(Subchannel subchannel, ConnectivityStateInfo stateInfo) {
-    System.out.println("RLSLB: handle subchannel state: " + stateInfo.getState());
-    new Throwable().printStackTrace(System.out);
-    super.handleSubchannelState(subchannel, stateInfo);
+    // this can be almost ignored, ACLBF may ask to different state to go shutdown...
+    rlsPicker.handleSubchannelState(subchannel, stateInfo);
   }
 
   @Override
   public void handleResolvedAddresses(ResolvedAddresses resolvedAddresses) {
-    System.out.println("handle: " + resolvedAddresses);
     LbPolicyConfiguration lbPolicyConfiguration =
         (LbPolicyConfiguration) resolvedAddresses.getLoadBalancingPolicyConfig();
     if (lbPolicyConfiguration != null
         && !lbPolicyConfiguration.equals(this.lbPolicyConfiguration)) {
       final RouteLookupConfig rlsConfig = lbPolicyConfiguration.getRouteLookupConfig();
-      System.out.println("apply rlsConfig: " + rlsConfig);
       boolean needToConnect = this.lbPolicyConfiguration == null
           || !this.lbPolicyConfiguration.getRouteLookupConfig().getLookupService().equals(
           lbPolicyConfiguration.getRouteLookupConfig().getLookupService());
       if (needToConnect) {
-        System.out.println("need to create new RlsClient");
         if (routeLookupClient != null) {
           routeLookupClient.close();
         }
@@ -72,7 +69,6 @@ class RlsLoadBalancer extends LoadBalancer {
         }
 
         EquivalentAddressGroup eag = RlsUtil.createEag(rlsConfig.getLookupService());
-        System.out.println("rlsServer: " + rlsConfig.getLookupService() + " eag: " + eag);
         rlsServerChannel = helper.createSubchannel(
             CreateSubchannelArgs.newBuilder()
                 .setAddresses(eag)
@@ -98,7 +94,7 @@ class RlsLoadBalancer extends LoadBalancer {
                 .build();
         routeLookupClient = client;
         // rls picker will report to helper
-        RlsPicker rlsPicker = new RlsPicker(lbPolicyConfiguration, client, helper, childLbResolvedAddressFactory);
+        this.rlsPicker = new RlsPicker(lbPolicyConfiguration, client, helper, childLbResolvedAddressFactory);
         childBalancerHelper.setRlsPicker(rlsPicker);
       }
       // TODO(creamsoup) update configs if necessary (maybe easier to create new cache?)

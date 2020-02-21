@@ -34,6 +34,7 @@ import javax.annotation.concurrent.Immutable;
 /** RlsProtoData is a collection of internal representation of RouteLookupService proto messages. */
 public final class RlsProtoData {
 
+  /** A data object for RouteLookupRequest proto. */
   @Immutable
   public static final class RouteLookupRequest {
 
@@ -45,6 +46,7 @@ public final class RlsProtoData {
 
     private final ImmutableMap<String, String> keyMap;
 
+    /** Constructor for RouteLookupRequest. */
     public RouteLookupRequest(
         String server, String path, String targetType, Map<String, String> keyMap) {
       this.server = checkNotNull(server, "server");
@@ -173,7 +175,7 @@ public final class RlsProtoData {
   @Immutable
   public static final class RouteLookupConfig {
 
-    public static final long MAX_AGE_MILLIS = TimeUnit.MINUTES.toMillis(5);
+    private static final long MAX_AGE_MILLIS = TimeUnit.MINUTES.toMillis(5);
 
     private final ImmutableList<GrpcKeyBuilder> grpcKeyBuilders;
 
@@ -193,6 +195,7 @@ public final class RlsProtoData {
 
     private final RequestProcessingStrategy requestProcessingStrategy;
 
+    /** Constructs RouteLookupConfig. */
     public RouteLookupConfig(
         List<GrpcKeyBuilder> grpcKeyBuilders,
         String lookupService,

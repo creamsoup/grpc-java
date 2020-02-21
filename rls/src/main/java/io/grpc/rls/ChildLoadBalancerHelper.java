@@ -9,9 +9,10 @@ import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.util.ForwardingLoadBalancerHelper;
 import javax.annotation.Nonnull;
 
-public final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
+final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
 
   private final Helper rlsHelper;
+  private String target;
   private RlsPicker rlsPicker;
 
   public ChildLoadBalancerHelper(Helper rlsHelper) {
@@ -27,17 +28,21 @@ public final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper 
     this.rlsPicker = checkNotNull(rlsPicker, "rlsPicker");
   }
 
+  public void setTarget(String target) {
+    this.target = checkNotNull(target, "target");
+  }
+
   @Override
   public void updateBalancingState(
       @Nonnull ConnectivityState newState,
       @Nonnull SubchannelPicker unused) {
-    System.out.println("CLBH: updating balancing status " + newState);
     checkState(rlsPicker != null, "Must provide RlsPicker before update balancing state");
-    super.updateBalancingState(newState, rlsPicker);
+    ConnectivityState newAggState = updateLbState(target, newState);
+    rlsHelper.updateBalancingState(newAggState, rlsPicker);
   }
 
-  public void updateLbState(String target, ConnectivityState state) {
-    System.out.println("CLBH: updating lb state: " +target + " / " + state);
+  private ConnectivityState updateLbState(String target, ConnectivityState state) {
     rlsPicker.getSubchannelStateManager().registerNewState(target, state);
+    return rlsPicker.getSubchannelStateManager().getAggregatedState();
   }
 }

@@ -50,6 +50,8 @@ public interface Throttler {
    */
   final class ThrottledException extends RuntimeException {
 
+    static final long serialVersionUID = 1L;
+
     public ThrottledException() {
       super();
     }

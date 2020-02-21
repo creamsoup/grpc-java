@@ -14,7 +14,7 @@ public class FakeNameResolverProvider extends NameResolverProvider {
 
   @Override
   protected int priority() {
-    return 1;
+    return 0;
   }
 
   @Override

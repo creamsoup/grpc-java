@@ -18,9 +18,8 @@ package grpc.lookup.v1;
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/empty.proto";
-import "grpc/rls/v1/rls.proto";
+import "grpc/lookup/v1/rls.proto";
 
-option go_package = "google.golang.org/grpc/lookup/grpc_lookup_v1";
 option java_multiple_files = true;
 option java_package = "io.grpc.lookup.v1";
 option java_outer_classname = "RlsTestProto";

@@ -20,7 +20,7 @@ import javax.annotation.CheckReturnValue;
 import javax.annotation.Nullable;
 
 /** An LruCache is a cache interface implementing least recently used eviction. */
-public interface LruCache<K, V> {
+interface LruCache<K, V> {
 
   /** Populates a cache entry. If the key already exists, it will replace the entry. */
   @Nullable

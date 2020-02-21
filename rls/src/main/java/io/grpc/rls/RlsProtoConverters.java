@@ -94,7 +94,9 @@ public final class RlsProtoConverters {
     }
   }
 
-  // This one will be from ServiceConfig (json)
+  /**
+   * A RouteLookupConfigConverter converts between json map to {@link RouteLookupConfig}.
+   */
   public static final class RouteLookupConfigConverter
       extends Converter<Map<String, ?>, RouteLookupConfig> {
 
@@ -109,14 +111,14 @@ public final class RlsProtoConverters {
       long timeout =
           TimeUnit.SECONDS.toMillis(JsonUtil.getNumberAsLong(json, "lookupServiceTimeout"));
       Long maxAge =
-          convertIfNotNull(
+          convertTimeIfNotNull(
               TimeUnit.SECONDS, TimeUnit.MILLISECONDS, JsonUtil.getNumberAsLong(json, "maxAge"));
       Long staleAge =
-          convertIfNotNull(
+          convertTimeIfNotNull(
               TimeUnit.SECONDS, TimeUnit.MILLISECONDS, JsonUtil.getNumberAsLong(json, "staleAge"));
       long cacheSize = JsonUtil.getNumberAsLong(json, "cacheSizeBytes");
       List<String> validTargets = JsonUtil.checkStringList(JsonUtil.getList(json, "validTargets"));
-          String defaultTarget = JsonUtil.getString(json, "defaultTarget");
+      String defaultTarget = JsonUtil.getString(json, "defaultTarget");
       RequestProcessingStrategy strategy =
           RequestProcessingStrategy
               .valueOf(JsonUtil.getString(json, "requestProcessingStrategy").toUpperCase());
@@ -132,14 +134,14 @@ public final class RlsProtoConverters {
           strategy);
     }
 
-    private static Long convertIfNotNull(TimeUnit from, TimeUnit to, Long value) {
+    private static Long convertTimeIfNotNull(TimeUnit from, TimeUnit to, Long value) {
       if (value == null) {
         return null;
       }
-      return from.convert(value, to);
+      return to.convert(value, from);
     }
 
-    private void checkUniqueName(List<GrpcKeyBuilder> grpcKeyBuilders) {
+    private static void checkUniqueName(List<GrpcKeyBuilder> grpcKeyBuilders) {
       Set<Name> names = new HashSet<>();
       for (GrpcKeyBuilder grpcKeyBuilder : grpcKeyBuilders) {
         int prevSize = names.size();

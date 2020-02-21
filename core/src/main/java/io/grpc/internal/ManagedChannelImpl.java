@@ -1098,6 +1098,7 @@ final class ManagedChannelImpl extends ManagedChannel implements
     @Override
     public AbstractSubchannel createSubchannel(
         List<EquivalentAddressGroup> addressGroups, Attributes attrs) {
+      System.out.println("@@@ REAL create subchannel ");
       logWarningIfNotInSyncContext("createSubchannel()");
       // TODO(ejona): can we be even stricter? Like loadBalancer == null?
       checkNotNull(addressGroups, "addressGroups");

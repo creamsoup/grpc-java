@@ -7,7 +7,7 @@ import io.grpc.Metadata;
 import io.grpc.NameResolverRegistry;
 import io.grpc.internal.JsonParser;
 import io.grpc.lookup.v1.BackendServiceGrpc;
-import io.grpc.lookup.v1.BackendServiceGrpc.BackendServiceBlockingStub;
+import io.grpc.lookup.v1.BackendServiceGrpc.BackendServiceStub;
 import io.grpc.lookup.v1.CacheRequest;
 import io.grpc.lookup.v1.CachedRouteLookupServiceGrpc;
 import io.grpc.lookup.v1.CachedRouteLookupServiceGrpc.CachedRouteLookupServiceBlockingStub;
@@ -17,9 +17,11 @@ import io.grpc.lookup.v1.RouteLookupRequest;
 import io.grpc.lookup.v1.RouteLookupResponse;
 import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.MetadataUtils;
+import io.grpc.stub.StreamObserver;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 public class Client {
@@ -75,36 +77,93 @@ public class Client {
             "Echo",
             ImmutableMap.of("id", "ididid"));
     RouteLookupResponse response3 =
-        createResponse("localhost:9002", "foo should have been the first one but who cares");
+        createResponse("random", "foo should have been the first one but who cares");
     rlsControlStub.registerReturnValue(createCacheRequest(request3, response3, 20));
+
     System.out.println("register request2 response2 done");
 
 
     System.out.println("=========================================");
 
-    BackendServiceBlockingStub bStub = BackendServiceGrpc.newBlockingStub(clientChannel);
-    for (int i = 0; i < 10; i++) {
+    BackendServiceStub bStub = BackendServiceGrpc.newStub(clientChannel);
+    final int iter = 3;
+    final CountDownLatch latch = new CountDownLatch(3 * iter);
+    for (int i = 0; i < iter; i++) {
       System.out.println("iter " + i + " to backend1(9001): " + System.currentTimeMillis());
-      EchoResponse respBackend1 =
-          bStub.echo(EchoRequest.newBuilder().setMessage("message" + i).build());
-      System.out.println("request " + i + " to backend1(9001) -> " + respBackend1);
+      final int iCopy = i;
+      bStub.echo(EchoRequest.newBuilder().setMessage("message" + i).build(),
+          new StreamObserver<EchoResponse>() {
+            @Override
+            public void onNext(EchoResponse value) {
+              System.out.println("request " + iCopy + " to backend1(9001) -> " + value);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+              System.out.println("error " + iCopy + " " + t.getMessage());
+              t.printStackTrace(System.out);
+              latch.countDown();
+            }
+
+            @Override
+            public void onCompleted() {
+              latch.countDown();
+              System.out.println("done " + iCopy);
+            }
+          });
 
       System.out.println("iter " + i + " to backend2(9002): " + System.currentTimeMillis());
       Metadata metadata = new Metadata();
       metadata.put(Metadata.Key.of("User", Metadata.ASCII_STRING_MARSHALLER), "creamsoup");
-      EchoResponse respBackend2 =
-          MetadataUtils.attachHeaders(bStub, metadata)
-              .echo(EchoRequest.newBuilder().setMessage("message" + i).build());
-      System.out.println("request " + i + " to backend2(9002) -> " + respBackend2);
+      MetadataUtils.attachHeaders(bStub, metadata)
+          .echo(EchoRequest.newBuilder().setMessage("message" + i).build(),
+              new StreamObserver<EchoResponse>() {
+                @Override
+                public void onNext(EchoResponse value) {
+                  System.out.println("request " + iCopy + " to backend1(9002) -> " + value);
+                }
+
+                @Override
+                public void onError(Throwable t) {
+                  System.out.println("error " + iCopy + " " + t.getMessage());
+                  t.printStackTrace(System.out);
+                  latch.countDown();
+                }
+
+                @Override
+                public void onCompleted() {
+                  latch.countDown();
+                  System.out.println("done " + iCopy);
+                }
+              });
 
       System.out.println("iter " + i + " to backend2(9002): " + System.currentTimeMillis());
       Metadata metadata2 = new Metadata();
       metadata2.put(Metadata.Key.of("X-Google-Id", Metadata.ASCII_STRING_MARSHALLER), "ididid");
-      EchoResponse respBackend2prime =
-          MetadataUtils.attachHeaders(bStub, metadata2)
-              .echo(EchoRequest.newBuilder().setMessage("message" + i).build());
-      System.out.println("request " + i + " to backend2'(9002) -> " + respBackend2prime);
+      MetadataUtils.attachHeaders(bStub, metadata2)
+          .echo(EchoRequest.newBuilder().setMessage("message" + i).build(),
+              new StreamObserver<EchoResponse>() {
+                @Override
+                public void onNext(EchoResponse value) {
+                  System.out.println("request " + iCopy + " to backend2'(9002) -> " + value);
+                }
+
+                @Override
+                public void onError(Throwable t) {
+                  System.out.println("error " + iCopy + " " + t.getMessage());
+                  t.printStackTrace(System.out);
+                  latch.countDown();
+                }
+
+                @Override
+                public void onCompleted() {
+                  latch.countDown();
+                  System.out.println("done " + iCopy);
+                }
+              });
+      Thread.sleep(100);
     }
+    latch.await();
   }
 
   private static CacheRequest createCacheRequest(RouteLookupRequest request1,
@@ -201,7 +260,7 @@ public class Client {
           + "  \"staleAge\": 240,\n"
           + "  \"validTargets\": [\"localhost:9001\", \"localhost:9002\"],"
           + "  \"cacheSizeBytes\": 1000,\n"
-          + "  \"defaultTarget\": \"localhost:12346\",\n"
+          + "  \"defaultTarget\": \"defaultTarget\",\n"
           + "  \"requestProcessingStrategy\": \"ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS\"\n"
           + "}";
   }

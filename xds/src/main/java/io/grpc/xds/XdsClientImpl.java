@@ -88,6 +88,8 @@ final class XdsClientImpl extends XdsClient {
 
   private final MessagePrinter respPrinter = new MessagePrinter();
 
+  // Name of the target server this gRPC client is trying to talk to.
+  private final String targetName;
   private final ManagedChannel channel;
   private final SynchronizationContext syncContext;
   private final ScheduledExecutorService timeService;
@@ -124,9 +126,6 @@ final class XdsClientImpl extends XdsClient {
   // watchers can watch endpoints in the same cluster.
   private final Map<String, Set<EndpointWatcher>> endpointWatchers = new HashMap<>();
 
-  // Load reporting clients, with each responsible for reporting loads of a single cluster.
-  private final Map<String, LoadReportClientImpl> lrsClients = new HashMap<>();
-
   // Resource fetch timers are used to conclude absence of resources. Each timer is activated when
   // subscription for the resource starts and disarmed on first update for the resource.
 
@@ -150,6 +149,8 @@ final class XdsClientImpl extends XdsClient {
   private BackoffPolicy retryBackoffPolicy;
   @Nullable
   private ScheduledHandle rpcRetryTimer;
+  @Nullable
+  private LoadReportClient lrsClient;
 
   // Following fields are set only after the ConfigWatcher registered. Once set, they should
   // never change.
@@ -163,6 +164,7 @@ final class XdsClientImpl extends XdsClient {
   private String ldsResourceName;
 
   XdsClientImpl(
+      String targetName,
       List<ServerInfo> servers,  // list of management servers
       XdsChannelFactory channelFactory,
       Node node,
@@ -170,6 +172,7 @@ final class XdsClientImpl extends XdsClient {
       ScheduledExecutorService timeService,
       BackoffPolicy.Provider backoffPolicyProvider,
       Supplier<Stopwatch> stopwatchSupplier) {
+    this.targetName = checkNotNull(targetName, "targetName");
     this.channel =
         checkNotNull(channelFactory, "channelFactory")
             .createChannel(checkNotNull(servers, "servers"));
@@ -189,8 +192,9 @@ final class XdsClientImpl extends XdsClient {
       adsStream.close(Status.CANCELLED.withDescription("shutdown").asException());
     }
     cleanUpResources();
-    for (LoadReportClientImpl lrsClient : lrsClients.values()) {
+    if (lrsClient != null) {
       lrsClient.stopLoadReporting();
+      lrsClient = null;
     }
     if (rpcRetryTimer != null) {
       rpcRetryTimer.cancel();
@@ -405,37 +409,32 @@ final class XdsClientImpl extends XdsClient {
   }
 
   @Override
-  LoadReportClient reportClientStats(String clusterName, String serverUri) {
-    checkNotNull(serverUri, "serverUri");
-    checkArgument(serverUri.equals(""),
-        "Currently only support empty serverUri, which defaults to the same "
-            + "management server this client talks to.");
-    if (!lrsClients.containsKey(clusterName)) {
-      LoadReportClientImpl lrsClient =
-          new LoadReportClientImpl(
+  void reportClientStats(
+      String clusterName, @Nullable String clusterServiceName, LoadStatsStore loadStatsStore) {
+    if (lrsClient == null) {
+      lrsClient =
+          new LoadReportClient(
+              targetName,
               channel,
-              clusterName,
               node,
               syncContext,
               timeService,
               backoffPolicyProvider,
               stopwatchSupplier);
-      lrsClient.startLoadReporting(
-          new LoadReportCallback() {
-            @Override
-            public void onReportResponse(long reportIntervalNano) {}
-          });
-      lrsClients.put(clusterName, lrsClient);
+      lrsClient.startLoadReporting(new LoadReportCallback() {
+        @Override
+        public void onReportResponse(long reportIntervalNano) {}
+      });
     }
-    return lrsClients.get(clusterName);
+    lrsClient.addLoadStatsStore(clusterName, clusterServiceName, loadStatsStore);
   }
 
   @Override
-  void cancelClientStatsReport(String clusterName) {
-    LoadReportClientImpl lrsClient = lrsClients.remove(clusterName);
-    if (lrsClient != null) {
-      lrsClient.stopLoadReporting();
-    }
+  void cancelClientStatsReport(String clusterName, @Nullable String clusterServiceName) {
+    checkState(lrsClient != null, "load reporting was never started");
+    lrsClient.removeLoadStatsStore(clusterName, clusterServiceName);
+    // TODO(chengyuanzhang): can be optimized to stop load reporting if no more loads need
+    //  to be reported.
   }
 
   /**
@@ -746,8 +745,7 @@ final class XdsClientImpl extends XdsClient {
             + "indicate to use EDS over ADS.";
         break;
       }
-      // If the service_name field is set, that value will be used for the EDS request
-      // instead of the cluster name (default).
+      // If the service_name field is set, that value will be used for the EDS request.
       if (!edsClusterConfig.getServiceName().isEmpty()) {
         updateBuilder.setEdsServiceName(edsClusterConfig.getServiceName());
         edsServices.add(edsClusterConfig.getServiceName());
@@ -770,10 +768,7 @@ final class XdsClientImpl extends XdsClient {
               + "management server.";
           break;
         }
-        updateBuilder.setEnableLrs(true);
         updateBuilder.setLrsServerName("");
-      } else {
-        updateBuilder.setEnableLrs(false);
       }
       if (cluster.hasTlsContext()) {
         updateBuilder.setUpstreamTlsContext(cluster.getTlsContext());

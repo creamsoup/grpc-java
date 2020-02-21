@@ -23,11 +23,16 @@ import io.grpc.LoadBalancerProvider;
 import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
 import io.grpc.internal.JsonUtil;
-import io.grpc.rls.LbPolicyConfiguration.LoadBalancingPolicy;
+import io.grpc.rls.LbPolicyConfiguration.ChildLoadBalancingPolicy;
 import io.grpc.rls.RlsProtoConverters.RouteLookupConfigConverter;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import java.util.Map;
 
+/**
+ * The provider for the "rls" balancing policy.  This class should not be directly referenced in
+ * code.  The policy should be accessed through {@link io.grpc.LoadBalancerRegistry#getProvider}
+ * with the name "rls".
+ */
 public class RlsLoadBalancerProvider extends LoadBalancerProvider {
 
   @Override
@@ -53,14 +58,15 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
 
   @Override
   public ConfigOrError parseLoadBalancingPolicyConfig(Map<String, ?> rawLoadBalancingConfigPolicy) {
-    System.out.println("RLSLBP: parsing " + rawLoadBalancingConfigPolicy);
     try {
       RouteLookupConfig routeLookupConfig = new RouteLookupConfigConverter()
           .convert(JsonUtil.getObject(rawLoadBalancingConfigPolicy, "routeLookupConfig"));
-      LoadBalancingPolicy lbPolicy = new LoadBalancingPolicy(
+      ChildLoadBalancingPolicy lbPolicy = new ChildLoadBalancingPolicy(
           JsonUtil.getString(rawLoadBalancingConfigPolicy, "childPolicyConfigTargetFieldName"),
           JsonUtil.checkObjectList(
               checkNotNull(JsonUtil.getList(rawLoadBalancingConfigPolicy, "childPolicy"))));
+      // Checking all valid targets to make sure the config is always valid. This strict check
+      // prevents child policy to handle invalid child policy.
       for (String validTarget : routeLookupConfig.getValidTargets()) {
         ConfigOrError childPolicyConfigOrError =
             lbPolicy
@@ -78,7 +84,6 @@ public class RlsLoadBalancerProvider extends LoadBalancerProvider {
       }
       return ConfigOrError.fromConfig(new LbPolicyConfiguration(routeLookupConfig, lbPolicy));
     } catch (Exception e) {
-      e.printStackTrace();
       return ConfigOrError.fromError(
           Status.INVALID_ARGUMENT
               .withDescription("can't parse config: " + e.getMessage())

@@ -20,12 +20,13 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.MoreObjects;
-import com.google.common.base.Objects;
+import com.google.common.collect.Iterables;
 import io.grpc.ConnectivityState;
+import io.grpc.LoadBalancer;
+import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.LoadBalancerRegistry;
-import io.grpc.Status;
 import io.grpc.internal.AtomicBackoff;
 import io.grpc.internal.ObjectPool;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
@@ -36,164 +37,62 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Logger;
-import javax.annotation.Nullable;
 
 /**
- * A LbPolicyConfiguration is configuration for RLS to delegate request to other LB implementations.
+ * LbPolicyConfiguration is a configuration for RLS load balancer.
  */
 final class LbPolicyConfiguration {
 
   private final RouteLookupConfig routeLookupConfig;
-  private final LoadBalancingPolicy policy;
+  private final ChildLoadBalancingPolicy policy;
 
-  public LbPolicyConfiguration(RouteLookupConfig routeLookupConfig, LoadBalancingPolicy policy) {
+  LbPolicyConfiguration(RouteLookupConfig routeLookupConfig, ChildLoadBalancingPolicy policy) {
     this.routeLookupConfig = checkNotNull(routeLookupConfig, "routeLookupConfig");
     this.policy = checkNotNull(policy, "policy");
   }
 
-  public RouteLookupConfig getRouteLookupConfig() {
+  RouteLookupConfig getRouteLookupConfig() {
     return routeLookupConfig;
   }
 
-  public LoadBalancingPolicy getLoadBalancingPolicy() {
+  ChildLoadBalancingPolicy getLoadBalancingPolicy() {
     return policy;
   }
 
-  static final class ChildPolicyWrapper implements Closeable {
-
-    private static final Logger logger = Logger.getLogger(ChildPolicyWrapper.class.getName());
-
-    private static final Map<String /* target */, RefCountedObjectPool<ChildPolicyWrapper>>
-        childPolicyMap = new HashMap<>();
-    private final String target;
-    private LoadBalancingPolicy childPolicy;
-    private ConnectivityState connectivityState = ConnectivityState.IDLE;
-    // private Subchannel subchannel;
-    private SubchannelPicker picker;
-    private boolean closed;
-
-    private ChildPolicyWrapper(String target) {
-      this.target = target;
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
     }
-
-    public static ChildPolicyWrapper createOrGet(String target) {
-      ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(target);
-      if (existing != null) {
-        return existing.getObject();
-      }
-      ChildPolicyWrapper childPolicyWrapper = new ChildPolicyWrapper(target);
-      RefCountedObjectPool<ChildPolicyWrapper> wrapper =
-          RefCountedObjectPool.of(childPolicyWrapper);
-      childPolicyMap.put(target, wrapper);
-      return wrapper.getObject();
+    if (o == null || getClass() != o.getClass()) {
+      return false;
     }
-
-    public String getTarget() {
-      return target;
-    }
-
-    public LoadBalancingPolicy getChildPolicy() {
-      return childPolicy;
-    }
-
-    public void setChildPolicy(LoadBalancingPolicy childPolicy) {
-      this.childPolicy = childPolicy;
-    }
-
-    public ConnectivityState getConnectivityState() {
-      return connectivityState;
-    }
-
-    public void setPicker(SubchannelPicker picker) {
-      this.picker = checkNotNull(picker, "picker");
-    }
-
-    public SubchannelPicker getPicker() {
-      return picker;
-    }
-
-    // public void setSubchannel(Subchannel subchannel) {
-    //   this.subchannel = checkNotNull(subchannel, "subchannel");
-    // }
-    //
-    public void setConnectivityState(ConnectivityState connectivityState) {
-      System.out.println("connectivity changed to " +connectivityState);
-      this.connectivityState = connectivityState;
-    }
-    //
-    // public Subchannel getSubchannel() {
-    //   return subchannel;
-    // }
-
-    public void release() {
-      ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(target);
-      checkState(existing != null, "doesn't exists!");
-      existing.returnObject(this);
-    }
-
-    @Override
-    public void close() {
-      // this might be error prone, if closed is called out side of release.
-      closed = true;
-      childPolicy = null;
-      connectivityState = null;
-      // subchannel.shutdown();
-      // subchannel = null;
-    }
-
-    @Override
-    protected void finalize() throws Throwable {
-      if (!closed) {
-        RefCountedObjectPool<ChildPolicyWrapper> pool = childPolicyMap.get(target);
-        if (pool != null) {
-          long refCnt = pool.refCnt.get();
-          logger.warning(
-              String.format(
-                  "ChildPolicyWrapper(target=%s) is garbage collected with refCnt=%d",
-                  target,
-                  refCnt));
-        }
-      }
-    }
-
-    @Override
-    public boolean equals(Object o) {
-      if (this == o) {
-        return true;
-      }
-      if (o == null || getClass() != o.getClass()) {
-        return false;
-      }
-      ChildPolicyWrapper wrapper = (ChildPolicyWrapper) o;
-      return Objects.equal(target, wrapper.target)
-          && Objects.equal(childPolicy, wrapper.childPolicy)
-          && connectivityState == wrapper.connectivityState;
-    }
-
-    @Override
-    public int hashCode() {
-      return Objects.hashCode(childPolicyMap, target, childPolicy, connectivityState);
-    }
-
-    @Override
-    public String toString() {
-      return MoreObjects.toStringHelper(this)
-          .add("target", target)
-          .add("childPolicy", childPolicy)
-          .add("connectivityState", connectivityState)
-          .add("picker", picker)
-          // .add("subchannel", subchannel)
-          .toString();
-    }
+    LbPolicyConfiguration that = (LbPolicyConfiguration) o;
+    return Objects.equals(routeLookupConfig, that.routeLookupConfig) &&
+        Objects.equals(policy, that.policy);
   }
 
-  static final class LoadBalancingPolicy {
+  @Override
+  public int hashCode() {
+    return Objects.hash(routeLookupConfig, policy);
+  }
 
-    private final Map<String, Object> effectiveChildPolicy;
+  @Override
+  public String toString() {
+    return MoreObjects.toStringHelper(this)
+        .add("routeLookupConfig", routeLookupConfig)
+        .add("policy", policy)
+        .toString();
+  }
+
+  /** ChildLoadBalancingPolicy is an elected child policy to delegate requests. */
+  static final class ChildLoadBalancingPolicy {
+
+    private final Map<String, Object> effectiveRawChildPolicy;
     private final LoadBalancerProvider effectiveLbProvider;
     private final String childPolicyConfigTargetFieldName;
 
@@ -201,7 +100,7 @@ final class LbPolicyConfiguration {
     private final ConcurrentMap<String /* path */, PendingRlsRequest> pendingRequests
         = new ConcurrentHashMap<>();
 
-    public LoadBalancingPolicy(
+    ChildLoadBalancingPolicy(
         String childPolicyConfigTargetFieldName,
         List<Map<String, ?>> childPolicies) {
       checkState(
@@ -217,7 +116,7 @@ final class LbPolicyConfiguration {
         if (childPolicy.isEmpty()) {
           continue;
         }
-        String policyName = childPolicy.keySet().iterator().next();
+        String policyName = Iterables.getOnlyElement(childPolicy.keySet());
         LoadBalancerProvider provider = lbRegistry.getProvider(policyName);
         if (provider != null) {
           effectiveLbProvider = provider;
@@ -229,27 +128,27 @@ final class LbPolicyConfiguration {
       checkState(
           effectiveChildPolicy != null,
           "no valid childPolicy found, policy tried: %s", policyTried);
-      this.effectiveChildPolicy = effectiveChildPolicy;
+      this.effectiveRawChildPolicy = effectiveChildPolicy;
       this.effectiveLbProvider = effectiveLbProvider;
     }
 
-    public String getChildPolicyConfigTargetFieldName() {
+    String getChildPolicyConfigTargetFieldName() {
       return childPolicyConfigTargetFieldName;
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, ?> getEffectiveChildPolicy(String target) {
-      checkState(effectiveChildPolicy.size() == 1, "???");
+    Map<String, ?> getEffectiveChildPolicy(String target) {
+      checkState(
+          effectiveRawChildPolicy.size() == 1, "child policy must have only 1 policy specified");
       Map.Entry<String, Object> childPolicyEntry =
-          effectiveChildPolicy.entrySet().iterator().next();
+          effectiveRawChildPolicy.entrySet().iterator().next();
       Map<String, Object> childPolicy =
           new HashMap<>((Map<String, Object>) childPolicyEntry.getValue());
       childPolicy.put(childPolicyConfigTargetFieldName, target);
-      System.out.println("EffectiveChildPolicy: " + childPolicy);
       return childPolicy;
     }
 
-    public LoadBalancerProvider getEffectiveLbProvider() {
+    LoadBalancerProvider getEffectiveLbProvider() {
       return effectiveLbProvider;
     }
 
@@ -261,32 +160,177 @@ final class LbPolicyConfiguration {
       if (o == null || getClass() != o.getClass()) {
         return false;
       }
-      LoadBalancingPolicy that = (LoadBalancingPolicy) o;
-      return Objects.equal(childPolicyConfigTargetFieldName, that.childPolicyConfigTargetFieldName)
-          && Objects.equal(effectiveChildPolicy, that.effectiveChildPolicy)
-          && Objects.equal(effectiveLbProvider, that.effectiveLbProvider);
+      ChildLoadBalancingPolicy that = (ChildLoadBalancingPolicy) o;
+      return Objects.equals(effectiveRawChildPolicy, that.effectiveRawChildPolicy) &&
+          Objects.equals(effectiveLbProvider, that.effectiveLbProvider) &&
+          Objects
+              .equals(childPolicyConfigTargetFieldName, that.childPolicyConfigTargetFieldName) &&
+          Objects.equals(pendingRequests, that.pendingRequests);
     }
 
     @Override
     public int hashCode() {
       return Objects
-          .hashCode(childPolicyConfigTargetFieldName, effectiveChildPolicy, effectiveLbProvider);
+          .hash(effectiveRawChildPolicy, effectiveLbProvider, childPolicyConfigTargetFieldName,
+              pendingRequests);
     }
 
-    static class PendingRlsRequest {
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("effectiveRawChildPolicy", effectiveRawChildPolicy)
+          .add("effectiveLbProvider", effectiveLbProvider)
+          .add("childPolicyConfigTargetFieldName", childPolicyConfigTargetFieldName)
+          .add("pendingRequests", pendingRequests)
+          .toString();
+    }
+
+    static final class PendingRlsRequest {
+      //TODO impl
       // state for the pending RLS request (will be only pending)?????
       // should it contain list of requests???
       AtomicBackoff backoff; // backoff status (doesn't mean it is backoff status)
     }
   }
 
-  private static class RefCountedObjectPool<T extends Closeable> implements ObjectPool<T> {
+  /**
+   * ChildPolicyWrapper is a wrapper class for child load balancer with additional information to
+   * keep track / manage / cache child policy.
+   */
+  static final class ChildPolicyWrapper implements Closeable {
+
+    static final Map<String /* target */, RefCountedObjectPool<ChildPolicyWrapper>>
+        childPolicyMap = new HashMap<>();
+    // TODO(creamsoup) removeme
+    static Map<Subchannel, LoadBalancer> lbs = new ConcurrentHashMap<>();
+
+    private final String target;
+    private ChildLoadBalancingPolicy childPolicy;
+    private LoadBalancer lb;
+    private Subchannel subchannel;
+    private ConnectivityState connectivityState = ConnectivityState.IDLE;
+    private SubchannelPicker picker;
+    private boolean closed;
+
+    private ChildPolicyWrapper(String target) {
+      this.target = target;
+    }
+
+    static ChildPolicyWrapper createOrGet(String target) {
+      ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(target);
+      if (existing != null) {
+        return existing.getObject();
+      }
+      ChildPolicyWrapper childPolicyWrapper = new ChildPolicyWrapper(target);
+      RefCountedObjectPool<ChildPolicyWrapper> wrapper =
+          RefCountedObjectPool.of(childPolicyWrapper);
+      childPolicyMap.put(target, wrapper);
+      return wrapper.getObject();
+    }
+
+    String getTarget() {
+      return target;
+    }
+
+    ChildLoadBalancingPolicy getChildPolicy() {
+      return childPolicy;
+    }
+
+    void setChildPolicy(ChildLoadBalancingPolicy childPolicy) {
+      this.childPolicy = childPolicy;
+    }
+
+    ConnectivityState getConnectivityState() {
+      return connectivityState;
+    }
+
+    void setSubchannel(Subchannel subchannel) {
+      this.subchannel = subchannel;
+      lbs.put(subchannel, lb);
+    }
+
+    Subchannel getSubchannel() {
+      return subchannel;
+    }
+
+    void setLoadBalancer(LoadBalancer lb) {
+      this.lb = lb;
+    }
+
+    LoadBalancer getLoadBalancer() {
+      return lb;
+    }
+
+    void setPicker(SubchannelPicker picker) {
+      this.picker = checkNotNull(picker, "picker");
+    }
+
+    SubchannelPicker getPicker() {
+      return picker;
+    }
+
+    void setConnectivityState(ConnectivityState connectivityState) {
+      this.connectivityState = connectivityState;
+    }
+
+    void release() {
+      ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(target);
+      checkState(existing != null, "doesn't exists!");
+      existing.returnObject(this);
+    }
+
+    @Override
+    public void close() {
+      // this might be error prone, if closed is called out side of release.
+      closed = true;
+      childPolicy = null;
+      connectivityState = null;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) {
+        return true;
+      }
+      if (o == null || getClass() != o.getClass()) {
+        return false;
+      }
+      ChildPolicyWrapper wrapper = (ChildPolicyWrapper) o;
+      return closed == wrapper.closed &&
+          Objects.equals(target, wrapper.target) &&
+          Objects.equals(childPolicy, wrapper.childPolicy) &&
+          Objects.equals(lb, wrapper.lb) &&
+          Objects.equals(subchannel, wrapper.subchannel) &&
+          connectivityState == wrapper.connectivityState &&
+          Objects.equals(picker, wrapper.picker);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(target, childPolicy, lb, subchannel, connectivityState, picker, closed);
+    }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("target", target)
+          .add("childPolicy", childPolicy)
+          .add("lb", lb)
+          .add("subchannel", subchannel)
+          .add("connectivityState", connectivityState)
+          .add("picker", picker)
+          .add("closed", closed)
+          .toString();
+    }
+  }
+
+  private static final class RefCountedObjectPool<T extends Closeable> implements ObjectPool<T> {
 
     private final AtomicLong refCnt = new AtomicLong(1);
-    private T t;
+    private T object;
 
-    private RefCountedObjectPool(T t) {
-      this.t = t;
+    private RefCountedObjectPool(T object) {
+      this.object = object;
     }
 
     @Override
@@ -295,26 +339,33 @@ final class LbPolicyConfiguration {
       if (curr <= 0) {
         throw new IllegalStateException("already released");
       }
-      return t;
+      return object;
     }
 
     @Override
     public T returnObject(Object object) {
-      checkState(t == object, "returned wrong object");
+      checkState(this.object == object, "returned wrong object");
       long newCnt = refCnt.decrementAndGet();
       if (newCnt == 0) {
         try {
-          t.close();
+          this.object.close();
         } catch (IOException e) {
           throw new RuntimeException("error during close", e);
         }
         return null;
       }
-      return t;
+      return this.object;
     }
 
-    public static <T extends Closeable> RefCountedObjectPool<T> of(T t) {
+    static <T extends Closeable> RefCountedObjectPool<T> of(T t) {
       return new RefCountedObjectPool<>(t);
+    }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("object", object)
+          .toString();
     }
   }
 }

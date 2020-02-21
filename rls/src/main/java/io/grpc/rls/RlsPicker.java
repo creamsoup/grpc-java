@@ -22,10 +22,12 @@ import com.google.common.base.MoreObjects;
 import com.google.common.collect.ConcurrentHashMultiset;
 import com.google.common.collect.Multiset;
 import io.grpc.ConnectivityState;
+import io.grpc.ConnectivityStateInfo;
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.PickResult;
 import io.grpc.LoadBalancer.PickSubchannelArgs;
+import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.Metadata;
@@ -60,8 +62,6 @@ public class RlsPicker extends SubchannelPicker {
 
   private RlsSubchannelStateManager subchannelStateManager = new RlsSubchannelStateManager();
 
-  // TODO manage connectivity status
-
   public RlsPicker(
       LbPolicyConfiguration lbPolicyConfiguration,
       AsyncCachingRlsClient rlsClient,
@@ -72,17 +72,8 @@ public class RlsPicker extends SubchannelPicker {
     this.helper = helper;
     this.requestFactory = new RlsRequestFactory(lbPolicyConfiguration.getRouteLookupConfig());
     this.strategy = lbPolicyConfiguration.getRouteLookupConfig().getRequestProcessingStrategy();
-    helper.updateBalancingState(ConnectivityState.CONNECTING, this);
-    rlsClient.addOobChannelStateListener(new RlsSubchannelStateListener() {
-
-      @Override
-      void onSubchannelStateChange(String target, ConnectivityState newState) {
-        // this is just informative, not really used
-        subchannelStateManager.registerOobState(newState);
-      }
-    });
     this.childLbResolvedAddressFactory = childLbResolvedAddressFactory;
-    System.out.println("rls picker created");
+    helper.updateBalancingState(ConnectivityState.CONNECTING, this);
   }
 
   public RlsSubchannelStateManager getSubchannelStateManager() {
@@ -91,45 +82,36 @@ public class RlsPicker extends SubchannelPicker {
 
   @Override
   public PickResult pickSubchannel(PickSubchannelArgs args) {
-    //TODO(creamsoup) use subchannel manager
-    System.out.println("===================================================");
     if (this.rlsClient == null) {
-      System.out.println("client is not set, pending pick!");
       return PickResult.withNoResult();
     }
 
     String[] methodName = args.getMethodDescriptor().getFullMethodName().split("/", 2);
     RouteLookupRequest request =
         requestFactory.create(methodName[0], methodName[1], args.getHeaders());
-    System.out.println("pick request: " + request);
     final CachedResponse response = rlsClient.get(request);
-    System.out.println("response: " + response);
 
     if (response.hasValidData()) {
       ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
-      System.out.println(">>>> valid data! subchannel state: "
-          + childPolicyWrapper.getConnectivityState());
       switch (childPolicyWrapper.getConnectivityState()) {
-        case IDLE:
         case CONNECTING:
-          // System.out.println("??? pending from valid");
-          // return handlePendingRequest(args);
+          return handlePendingRequest(args);
+        case IDLE:
+          if (childPolicyWrapper.getPicker() == null) {
+            return PickResult.withNoResult();
+          }
+          return childPolicyWrapper.getPicker().pickSubchannel(args);
         case READY:
-          System.out.println("??? good");
           return childPolicyWrapper.getPicker().pickSubchannel(args);
         case TRANSIENT_FAILURE:
-          System.out.println("??? transient failure");
           return handleError(Status.INTERNAL);
         case SHUTDOWN:
         default:
-          System.out.println("??? aborted");
           return handleError(Status.ABORTED);
       }
     } else if (response.hasError()) {
-      System.out.println(">>>> error");
       return handleError(response.getStatus());
     } else {
-      System.out.println(">>>> pending");
       // pending request
       return handlePendingRequest(args);
     }
@@ -138,7 +120,6 @@ public class RlsPicker extends SubchannelPicker {
   private PickResult handleError(Status cause) {
     switch (strategy) {
       case SYNC_LOOKUP_CLIENT_SEES_ERROR:
-        System.out.println("with error");
         return PickResult.withError(cause);
       case SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR:
         return useFallback(/* args= */ null, /* blocking= */ true);
@@ -153,7 +134,6 @@ public class RlsPicker extends SubchannelPicker {
       case SYNC_LOOKUP_CLIENT_SEES_ERROR:
         // fall-through
       case SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR:
-        System.out.println("??? final pending");
         return PickResult.withNoResult();
       case ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS:
         // use default target
@@ -166,7 +146,6 @@ public class RlsPicker extends SubchannelPicker {
 
   /** Uses Subchannel connected to default target. */
   private PickResult useFallback(PickSubchannelArgs args, boolean blocking) {
-    System.out.println("use fallback! blocking: " + blocking + " args: " + args);
     CountDownLatch readyLatch = new CountDownLatch(0);
     String defaultTarget = lbPolicyConfiguration.getRouteLookupConfig().getDefaultTarget();
     if (fallbackChildPolicyWrapper == null
@@ -174,7 +153,6 @@ public class RlsPicker extends SubchannelPicker {
       readyLatch = startFallbackChildPolicy();
     }
     if (blocking) {
-      System.out.println("waiting to be connected");
       try {
         readyLatch
             .await(
@@ -187,21 +165,21 @@ public class RlsPicker extends SubchannelPicker {
         return PickResult.withError(Status.fromThrowable(e));
       }
     }
-
     switch (fallbackChildPolicyWrapper.getConnectivityState()) {
-      case IDLE:
-        // fall-through
       case CONNECTING:
-        System.out.println("fallback no result");
         return PickResult.withNoResult();
       case TRANSIENT_FAILURE:
         // fall-through
       case SHUTDOWN:
-        System.out.println("fallback shutdown error");
+        //TODO store status from child to return
         return PickResult.withError(Status.UNKNOWN);
+      case IDLE:
+        SubchannelPicker picker = fallbackChildPolicyWrapper.getPicker();
+        if (picker == null) {
+          return PickResult.withNoResult();
+        }
+        return picker.pickSubchannel(args);
       case READY:
-        System.out.println("fallback ready!");
-        //TODO removeme
         return fallbackChildPolicyWrapper.getPicker().pickSubchannel(args);
     }
     throw new AssertionError();
@@ -210,29 +188,42 @@ public class RlsPicker extends SubchannelPicker {
   private CountDownLatch startFallbackChildPolicy() {
     final String defaultTarget = lbPolicyConfiguration.getRouteLookupConfig().getDefaultTarget();
     fallbackChildPolicyWrapper = ChildPolicyWrapper.createOrGet(defaultTarget);
-    System.out.println("connecting to fallback channel, target: " + defaultTarget);
     final CountDownLatch readyLatch = new CountDownLatch(1);
 
-    LoadBalancerProvider lbProvider =
+    final LoadBalancerProvider lbProvider =
         lbPolicyConfiguration.getLoadBalancingPolicy().getEffectiveLbProvider();
+    ChildLoadBalancerHelper delegate = new ChildLoadBalancerHelper(helper);
+    delegate.setRlsPicker(this);
+    delegate.setTarget(defaultTarget);
     ChildPolicyReportingHelper childPolicyReportingHelper =
-        new ChildPolicyReportingHelper(
-            new ChildLoadBalancerHelper(helper), fallbackChildPolicyWrapper);
+        new ChildPolicyReportingHelper(delegate, fallbackChildPolicyWrapper);
     final LoadBalancer lb =
         lbProvider.newLoadBalancer(childPolicyReportingHelper);
-    childPolicyReportingHelper.setLb(lb);
-    final ConfigOrError lbConfig = lbProvider
-        .parseLoadBalancingPolicyConfig(
-            lbPolicyConfiguration.getLoadBalancingPolicy().getEffectiveChildPolicy(defaultTarget));
+    final ConfigOrError lbConfig =
+        lbProvider
+            .parseLoadBalancingPolicyConfig(
+                lbPolicyConfiguration
+                    .getLoadBalancingPolicy()
+                    .getEffectiveChildPolicy(defaultTarget));
+    fallbackChildPolicyWrapper.setChildPolicy(lbPolicyConfiguration.getLoadBalancingPolicy());
+    fallbackChildPolicyWrapper.setLoadBalancer(lb);
     helper.getSynchronizationContext().execute(
         new Runnable() {
           @Override
           public void run() {
             lb.handleResolvedAddresses(childLbResolvedAddressFactory.create(lbConfig.getConfig()));
             lb.requestConnection();
+            readyLatch.countDown();
           }
         });
     return readyLatch;
+  }
+
+  @SuppressWarnings("deprecation")
+  void handleSubchannelState(Subchannel subchannel, ConnectivityStateInfo stateInfo) {
+    // need a map of Subchannel to LB
+    //TODO remove this hack
+    ChildPolicyWrapper.lbs.get(subchannel).handleSubchannelState(subchannel, stateInfo);
   }
 
   static abstract class RlsSubchannelStateListener {
@@ -255,8 +246,6 @@ public class RlsPicker extends SubchannelPicker {
       if (existing != null) {
         stateMultiset.remove(existing);
       }
-      System.out.println("new State registered: " + name + " " + newState
-          + " / aggState: " + getAggregatedState());
     }
 
     @Nullable

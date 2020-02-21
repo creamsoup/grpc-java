@@ -177,16 +177,22 @@ final class GrpclbState {
       this.serviceName = checkNotNull(helper.getAuthority(), "helper returns null authority");
     }
     this.logger = checkNotNull(helper.getChannelLogger(), "logger");
+    System.out.println("New grpclb with config: " + config + " helper: " + helper);
   }
 
   void handleSubchannelState(Subchannel subchannel, ConnectivityStateInfo newState) {
+    System.out.println("grpclb: handle subchannel state: " +newState + " chan: " + subchannel);
     if (newState.getState() == SHUTDOWN) {
+      System.out.println("oops shutdown return");
       return;
     }
+    System.out.println("subchannels: " + subchannels);
     if (!subchannels.values().contains(subchannel)) {
       if (subchannelPool != null ) {
+        System.out.println("handle state (shouldn't be called)");
         subchannelPool.handleSubchannelState(subchannel, newState);
       }
+      System.out.println("return here?!");
       return;
     }
     if (config.getMode() == Mode.ROUND_ROBIN && newState.getState() == IDLE) {
@@ -194,6 +200,7 @@ final class GrpclbState {
     }
     subchannel.getAttributes().get(STATE_INFO).set(newState);
     maybeUseFallbackBackends();
+    System.out.println("maybe update picker");
     maybeUpdatePicker();
   }
 
@@ -426,13 +433,13 @@ final class GrpclbState {
       case PICK_FIRST:
         checkState(subchannels.size() <= 1, "Unexpected Subchannel count: %s", subchannels);
         Subchannel subchannel;
-        System.out.println("new backend addresses: " + newBackendAddrList);
-        if (newBackendAddrList.isEmpty() && subchannels.size() == 1) {
-          // server reported no available backends, going to TRANSIENT_FAILURE.
-          cancelFallbackTimer();
-          subchannel = subchannels.values().iterator().next();
-          subchannel.shutdown();
-          subchannels = Collections.emptyMap();
+        if (newBackendAddrList.isEmpty()) {
+          if (subchannels.size() == 1) {
+            cancelFallbackTimer();
+            subchannel = subchannels.values().iterator().next();
+            subchannel.shutdown();
+            subchannels = Collections.emptyMap();
+          }
           break;
         }
         List<EquivalentAddressGroup> eagList = new ArrayList<>();
@@ -453,17 +460,18 @@ final class GrpclbState {
         if (subchannels.isEmpty()) {
           // TODO(zhangkun83): remove the deprecation suppression on this method once migrated to
           // the new createSubchannel().
-          System.out.println("&&&& creating new channel!!! klk");
+          System.out.println("&&&& creating new channel!!! eag: " + eagList);
           subchannel = helper.createSubchannel(eagList, createSubchannelAttrs());
         } else {
-          System.out.println("&&&& updating address klk");
           subchannel = subchannels.values().iterator().next();
           subchannel.updateAddresses(eagList);
         }
         subchannels = Collections.singletonMap(eagList, subchannel);
+        System.out.println("new subchannels: " +subchannels);
         newBackendList.add(
             new BackendEntry(subchannel, new TokenAttachingTracerFactory(loadRecorder)));
-        System.out.println("backendlist: " + newBackendList + "  drop: " + dropList + " sub: " + subchannels);
+        System.out.println(
+            "backendlist: " + newBackendList + "  drop: " + dropList + " sub: " + subchannels);
         break;
       default:
         throw new AssertionError("Missing case for " + config.getMode());
@@ -585,7 +593,7 @@ final class GrpclbState {
         return;
       }
       logger.log(ChannelLogLevel.DEBUG, "Got an LB response: {0}", response);
-      System.out.println("lb response " + response);
+      System.out.println("grpclb lb response " + response);
 
       LoadBalanceResponseTypeCase typeCase = response.getLoadBalanceResponseTypeCase();
       if (!initialResponseReceived) {
@@ -745,7 +753,8 @@ final class GrpclbState {
       case PICK_FIRST:
         if (backendList.isEmpty()) {
           if (lbSentEmptyBackends) {
-            pickList = Collections.<RoundRobinEntry>singletonList(new ErrorEntry(Status.UNAVAILABLE.withDescription("LB returned empty address")));
+            pickList =
+                Collections.<RoundRobinEntry>singletonList(new ErrorEntry(Status.UNAVAILABLE));
             state = TRANSIENT_FAILURE;
           } else {
             pickList = Collections.singletonList(BUFFER_ENTRY);
@@ -794,11 +803,9 @@ final class GrpclbState {
       System.out.println(1);
       return;
     }
-    System.out.println(2);
     currentPicker = picker;
     logger.log(
         ChannelLogLevel.INFO, "{0}: picks={1}, drops={2}", state, picker.pickList, picker.dropList);
-    System.out.println("state: " + state + " picker " + picker);
     helper.updateBalancingState(state, picker);
   }
 
@@ -974,6 +981,7 @@ final class GrpclbState {
         syncContext.execute(new Runnable() {
             @Override
             public void run() {
+              System.out.println("grpclb requesting connection in subchannel " + subchannel);
               subchannel.requestConnection();
             }
           });
@@ -1056,7 +1064,7 @@ final class GrpclbState {
 
     @Override
     public PickResult pickSubchannel(PickSubchannelArgs args) {
-      System.out.println("pick subchannel " + args);
+      System.out.println("grpclb received pick subchannel");
       synchronized (pickList) {
         // Two-level round-robin.
         // First round-robin on dropList. If a drop entry is selected, request will be dropped.  If
@@ -1079,7 +1087,7 @@ final class GrpclbState {
         if (pickIndex == pickList.size()) {
           pickIndex = 0;
         }
-        System.out.println("pick: " + pick);
+        System.out.println("grpclb pick: "+args);
         return pick.picked(args.getHeaders());
       }
     }
