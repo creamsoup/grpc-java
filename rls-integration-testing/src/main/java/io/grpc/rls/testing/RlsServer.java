@@ -1,4 +1,20 @@
-package io.grpc.rls.integration;
+/*
+ * Copyright 2020 The gRPC Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.grpc.rls.testing;
 
 import com.google.protobuf.Empty;
 import io.grpc.Server;
@@ -13,13 +29,16 @@ import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
-public class RlsServer {
+/** Fake rls server with caching interface. */
+public final class RlsServer {
 
   private static final ConcurrentHashMap<RouteLookupRequest, CacheRequest> cache
       = new ConcurrentHashMap<>();
 
+  /** Main. */
   public static void main(String[] args) throws IOException, InterruptedException {
     Server server =
         NettyServerBuilder
@@ -32,17 +51,18 @@ public class RlsServer {
     server.awaitTermination();
   }
 
-  public static final class RlsServerImpl extends RouteLookupServiceGrpc.RouteLookupServiceImplBase {
+  static final class RlsServerImpl extends RouteLookupServiceGrpc.RouteLookupServiceImplBase {
 
     private final ConcurrentHashMap<RouteLookupRequest, CacheRequest> cache;
     private final ScheduledExecutorService ses = Executors.newSingleThreadScheduledExecutor();
 
-    public RlsServerImpl(
+    RlsServerImpl(
         ConcurrentHashMap<RouteLookupRequest, CacheRequest> cache) {
       this.cache = cache;
     }
 
     @Override
+    @SuppressWarnings("ProtoDurationGetSecondsGetNano")  // shouldn't exceed 1s
     public void routeLookup(final RouteLookupRequest request,
         final StreamObserver<RouteLookupResponse> responseObserver) {
       final CacheRequest value = cache.get(request);
@@ -51,7 +71,7 @@ public class RlsServer {
         responseObserver.onError(new RuntimeException("not found"));
       } else {
         log("###### found", value);
-        ses.schedule(
+        ScheduledFuture<?> unused = ses.schedule(
             new Runnable() {
               @Override
               public void run() {
@@ -71,12 +91,12 @@ public class RlsServer {
             + "\n===============================");
   }
 
-  public static final class RlsCacheServerImpl
+  static final class RlsCacheServerImpl
       extends CachedRouteLookupServiceGrpc.CachedRouteLookupServiceImplBase {
 
     private final ConcurrentHashMap<RouteLookupRequest, CacheRequest> cache;
 
-    public RlsCacheServerImpl(
+    RlsCacheServerImpl(
         ConcurrentHashMap<RouteLookupRequest, CacheRequest> cache) {
       this.cache = cache;
     }

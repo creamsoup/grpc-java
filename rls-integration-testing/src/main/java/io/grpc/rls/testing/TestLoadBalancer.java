@@ -1,4 +1,20 @@
-package io.grpc.rls.integration;
+/*
+ * Copyright 2020 The gRPC Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.grpc.rls.testing;
 
 import static com.google.common.base.Preconditions.checkState;
 
@@ -19,7 +35,10 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-public class TestLoadBalancer {
+/** Fake loadbalancer to test. */
+public final class TestLoadBalancer {
+
+  /** Main. */
   public static void main(String[] args) throws IOException, InterruptedException {
     // int port = 12345;
     int port = Integer.parseInt(args[0]);
@@ -43,20 +62,20 @@ public class TestLoadBalancer {
     }
   }
 
-  public static final class Pair<A, B> {
-    A a;
-    B b;
+  static final class Pair<A, B> {
+    A left;
+    B right;
 
-    public Pair(A a, B b) {
-      this.a = a;
-      this.b = b;
+    public Pair(A left, B right) {
+      this.left = left;
+      this.right = right;
     }
   }
 
-  public static final class TestLoadBalancerImpl extends LoadBalancerImplBase {
+  static final class TestLoadBalancerImpl extends LoadBalancerImplBase {
     private final Multimap<String, Pair<byte[], Integer>> backendsAddressesForTarget;
 
-    public TestLoadBalancerImpl(
+    TestLoadBalancerImpl(
         Multimap<String, Pair<byte[], Integer>> backendsAddressesForTarget) {
       this.backendsAddressesForTarget = backendsAddressesForTarget;
     }
@@ -76,7 +95,8 @@ public class TestLoadBalancer {
                 LoadBalanceResponse.newBuilder()
                     .setInitialResponse(
                         InitialLoadBalanceResponse.newBuilder()
-                            .setClientStatsReportInterval(Duration.newBuilder().setSeconds(3600).build())
+                            .setClientStatsReportInterval(
+                                Duration.newBuilder().setSeconds(3600).build())
                             .build())
                     .build());
           }
@@ -85,9 +105,9 @@ public class TestLoadBalancer {
           for (Pair<byte[], Integer> s : backendsAddressesForTarget.get(name)) {
             servers.add(
                 io.grpc.lb.v1.Server.newBuilder()
-                    .setIpAddress(ByteString.copyFrom(s.a))
+                    .setIpAddress(ByteString.copyFrom(s.left))
                     .setLoadBalanceToken("token1")
-                    .setPort(s.b)
+                    .setPort(s.right)
                     .build());
           }
           LoadBalanceResponse lbResponse =
