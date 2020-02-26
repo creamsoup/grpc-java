@@ -72,8 +72,8 @@ final class LbPolicyConfiguration {
       return false;
     }
     LbPolicyConfiguration that = (LbPolicyConfiguration) o;
-    return Objects.equals(routeLookupConfig, that.routeLookupConfig) &&
-        Objects.equals(policy, that.policy);
+    return Objects.equals(routeLookupConfig, that.routeLookupConfig)
+        && Objects.equals(policy, that.policy);
   }
 
   @Override
@@ -161,11 +161,10 @@ final class LbPolicyConfiguration {
         return false;
       }
       ChildLoadBalancingPolicy that = (ChildLoadBalancingPolicy) o;
-      return Objects.equals(effectiveRawChildPolicy, that.effectiveRawChildPolicy) &&
-          Objects.equals(effectiveLbProvider, that.effectiveLbProvider) &&
-          Objects
-              .equals(childPolicyConfigTargetFieldName, that.childPolicyConfigTargetFieldName) &&
-          Objects.equals(pendingRequests, that.pendingRequests);
+      return Objects.equals(effectiveRawChildPolicy, that.effectiveRawChildPolicy)
+          && Objects.equals(effectiveLbProvider, that.effectiveLbProvider)
+          && Objects.equals(childPolicyConfigTargetFieldName, that.childPolicyConfigTargetFieldName)
+          && Objects.equals(pendingRequests, that.pendingRequests);
     }
 
     @Override
@@ -296,13 +295,13 @@ final class LbPolicyConfiguration {
         return false;
       }
       ChildPolicyWrapper wrapper = (ChildPolicyWrapper) o;
-      return closed == wrapper.closed &&
-          Objects.equals(target, wrapper.target) &&
-          Objects.equals(childPolicy, wrapper.childPolicy) &&
-          Objects.equals(lb, wrapper.lb) &&
-          Objects.equals(subchannel, wrapper.subchannel) &&
-          connectivityState == wrapper.connectivityState &&
-          Objects.equals(picker, wrapper.picker);
+      return closed == wrapper.closed
+          && Objects.equals(target, wrapper.target)
+          && Objects.equals(childPolicy, wrapper.childPolicy)
+          && Objects.equals(lb, wrapper.lb)
+          && Objects.equals(subchannel, wrapper.subchannel)
+          && connectivityState == wrapper.connectivityState
+          && Objects.equals(picker, wrapper.picker);
     }
 
     @Override

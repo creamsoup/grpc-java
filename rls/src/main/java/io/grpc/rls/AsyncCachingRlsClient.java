@@ -158,11 +158,6 @@ final class AsyncCachingRlsClient {
     ConnectivityState oobChannelStateCopy = oobChannelState;
     oobChannelState = state;
     switch (state) {
-      case IDLE:
-        // fall-through
-      case CONNECTING:
-        this.stub = null;
-        return;
       case READY:
         this.stub = RouteLookupServiceGrpc.newStub(subchannel.asChannel());
         if (oobChannelStateCopy == ConnectivityState.TRANSIENT_FAILURE) {
@@ -175,8 +170,15 @@ final class AsyncCachingRlsClient {
         return;
       case TRANSIENT_FAILURE:
         return;
+      case IDLE:
+        // fall-through
+      case CONNECTING:
+        // fall-through
       case SHUTDOWN:
         this.stub = null;
+        return;
+      default:
+        throw new AssertionError();
     }
   }
 
@@ -281,8 +283,7 @@ final class AsyncCachingRlsClient {
     }
   }
 
-  // TODO possibly return wrapper like this
-  /** */
+  /** Cached response of RouteLookupRequest. */
   static final class CachedResponse {
     private final RouteLookupRequest request;
 

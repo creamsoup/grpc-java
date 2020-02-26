@@ -33,7 +33,7 @@ import java.util.Map;
  * code.  The policy should be accessed through {@link io.grpc.LoadBalancerRegistry#getProvider}
  * with the name "rls".
  */
-public class RlsLoadBalancerProvider extends LoadBalancerProvider {
+public final class RlsLoadBalancerProvider extends LoadBalancerProvider {
 
   @Override
   public boolean isAvailable() {

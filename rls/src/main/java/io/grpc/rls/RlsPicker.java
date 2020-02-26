@@ -16,7 +16,7 @@
 
 package io.grpc.rls;
 
-import static io.opencensus.internal.Utils.checkNotNull;
+import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.ConcurrentHashMultiset;
@@ -44,7 +44,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.Nullable;
 
-public class RlsPicker extends SubchannelPicker {
+final class RlsPicker extends SubchannelPicker {
 
   /** A header will be added when RLS server respond with additional header data. */
   public static final Metadata.Key<String> RLS_DATA_KEY =
@@ -62,7 +62,7 @@ public class RlsPicker extends SubchannelPicker {
 
   private RlsSubchannelStateManager subchannelStateManager = new RlsSubchannelStateManager();
 
-  public RlsPicker(
+  RlsPicker(
       LbPolicyConfiguration lbPolicyConfiguration,
       AsyncCachingRlsClient rlsClient,
       Helper helper,
@@ -76,7 +76,7 @@ public class RlsPicker extends SubchannelPicker {
     helper.updateBalancingState(ConnectivityState.CONNECTING, this);
   }
 
-  public RlsSubchannelStateManager getSubchannelStateManager() {
+  RlsSubchannelStateManager getSubchannelStateManager() {
     return subchannelStateManager;
   }
 
@@ -125,8 +125,9 @@ public class RlsPicker extends SubchannelPicker {
         return useFallback(/* args= */ null, /* blocking= */ true);
       case ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS:
         return useFallback(/* args= */ null, /* blocking= */ false);
+      default:
+        throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
     }
-    throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
   }
 
   private PickResult handlePendingRequest(PickSubchannelArgs args) {
@@ -138,8 +139,9 @@ public class RlsPicker extends SubchannelPicker {
       case ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS:
         // use default target
         return useFallback(args, /* blocking= */ false);
+      default:
+        throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
     }
-    throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
   }
 
   private ChildPolicyWrapper fallbackChildPolicyWrapper;
@@ -181,8 +183,9 @@ public class RlsPicker extends SubchannelPicker {
         return picker.pickSubchannel(args);
       case READY:
         return fallbackChildPolicyWrapper.getPicker().pickSubchannel(args);
+      default:
+        throw new AssertionError();
     }
-    throw new AssertionError();
   }
 
   private CountDownLatch startFallbackChildPolicy() {
@@ -226,12 +229,11 @@ public class RlsPicker extends SubchannelPicker {
     ChildPolicyWrapper.lbs.get(subchannel).handleSubchannelState(subchannel, stateInfo);
   }
 
-  static abstract class RlsSubchannelStateListener {
+  abstract static class RlsSubchannelStateListener {
     abstract void onSubchannelStateChange(String target, ConnectivityState newState);
   }
 
   static final class RlsSubchannelStateManager {
-    ConnectivityState oobChannelState = ConnectivityState.IDLE;
     ConcurrentHashMap<String, ConnectivityState> stateMap = new ConcurrentHashMap<>();
     Multiset<ConnectivityState> stateMultiset = ConcurrentHashMultiset.create();
 
@@ -272,10 +274,6 @@ public class RlsPicker extends SubchannelPicker {
       return MoreObjects.toStringHelper(this)
           .add("stateMap", stateMap)
           .toString();
-    }
-
-    public void registerOobState(ConnectivityState newState) {
-      oobChannelState = newState;
     }
   }
 }

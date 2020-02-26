@@ -2,16 +2,19 @@ plugins {
     id "java"
     id "maven-publish"
     id "com.google.protobuf"
+    id "application"
 }
 
-description = "gRPC: RouteLookupService Loadbalancing plugin"
+description = "gRPC: RouteLookupService Loadbalancing manual integration test"
 
 evaluationDependsOn(project(':grpc-core').path)
 
 dependencies {
-    implementation project(':grpc-core'),
+    implementation project(':grpc-alts'),
+            project(':grpc-core'),
             project(':grpc-protobuf'),
             project(':grpc-stub'),
+            project(':grpc-rls')
             libraries.protobuf
     compile(libraries.protobuf_util) {
         // prefer 26.0-android from libraries instead of 20.0
@@ -19,13 +22,11 @@ dependencies {
         // prefer 2.3.3 from libraries instead of 2.3.2
         exclude group: 'com.google.errorprone', module: 'error_prone_annotations'
     }
-    // rls v1 has grpclb runtime dependency
-    runtime project(':grpc-grpclb')
     compileOnly libraries.javax_annotation
-    testCompile libraries.truth,
-            project(':grpc-testing'),
-            project(':grpc-testing-proto'),
-            project(':grpc-core').sourceSets.test.output
 }
 
 configureProtoCompilation()
+
+application {
+    mainClassName = project.hasProperty("mainClass") ? getProperty("mainClass") : "NULL"
+}

@@ -18,6 +18,7 @@ package io.grpc.rls;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
+import com.google.common.base.MoreObjects;
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Table;
 import io.grpc.Metadata;
@@ -37,10 +38,14 @@ import javax.annotation.CheckReturnValue;
  */
 public final class RlsRequestFactory {
 
+  private final String lookupService;
   // table of Path(serviceName.methodName or serviceName.*), rls request headerName, header fields
   private final Table<String, String, NameMatcher> keyBuilderTable;
 
+  /** Constructor. */
   public RlsRequestFactory(RouteLookupConfig rlsConfig) {
+    checkNotNull(rlsConfig, "rlsConfig");
+    this.lookupService = rlsConfig.getLookupService();
     this.keyBuilderTable = createKeyBuilderTable(rlsConfig);
   }
 
@@ -63,6 +68,7 @@ public final class RlsRequestFactory {
     return table;
   }
 
+  /** Creates an {@link RouteLookupRequest} for given request's metadata. */
   @CheckReturnValue
   public RouteLookupRequest create(String service, String method, Metadata metadata) {
     checkNotNull(service, "service");
@@ -96,5 +102,13 @@ public final class RlsRequestFactory {
       }
     }
     return rlsRequestHeaders;
+  }
+
+  @Override
+  public String toString() {
+    return MoreObjects.toStringHelper(this)
+        .add("lookupService", lookupService)
+        .add("keyBuilderTable", keyBuilderTable)
+        .toString();
   }
 }

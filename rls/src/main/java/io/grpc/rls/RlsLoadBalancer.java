@@ -94,7 +94,8 @@ final class RlsLoadBalancer extends LoadBalancer {
                 .build();
         routeLookupClient = client;
         // rls picker will report to helper
-        this.rlsPicker = new RlsPicker(lbPolicyConfiguration, client, helper, childLbResolvedAddressFactory);
+        this.rlsPicker =
+            new RlsPicker(lbPolicyConfiguration, client, helper, childLbResolvedAddressFactory);
         childBalancerHelper.setRlsPicker(rlsPicker);
       }
       // TODO(creamsoup) update configs if necessary (maybe easier to create new cache?)

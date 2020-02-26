@@ -19,7 +19,7 @@ import static io.grpc.stub.ServerCalls.asyncUnimplementedUnaryCall;
  */
 @javax.annotation.Generated(
     value = "by gRPC proto compiler",
-    comments = "Source: grpc/rls/v1/rls.proto")
+    comments = "Source: grpc/lookup/v1/rls.proto")
 public final class RouteLookupServiceGrpc {
 
   private RouteLookupServiceGrpc() {}
