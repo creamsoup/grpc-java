@@ -21,6 +21,8 @@ import static org.junit.Assert.fail;
 
 import com.google.common.collect.ImmutableList;
 import io.grpc.Metadata;
+import io.grpc.Status.Code;
+import io.grpc.StatusRuntimeException;
 import io.grpc.rls.RlsProtoData.GrpcKeyBuilder;
 import io.grpc.rls.RlsProtoData.GrpcKeyBuilder.Name;
 import io.grpc.rls.RlsProtoData.NameMatcher;
@@ -28,7 +30,6 @@ import io.grpc.rls.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import java.util.concurrent.TimeUnit;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -49,10 +50,15 @@ public class RlsRequestFactoryTest {
                       new NameMatcher("user", ImmutableList.of("User", "Parent"), true),
                       new NameMatcher("password", ImmutableList.of("Password"), true))),
               new GrpcKeyBuilder(
+                  ImmutableList.of(new Name("service2")),
+                  ImmutableList.of(
+                      new NameMatcher("user", ImmutableList.of("User", "Parent"), false),
+                      new NameMatcher("password", ImmutableList.of("Password"), true))),
+              new GrpcKeyBuilder(
                   ImmutableList.of(new Name("service3")),
                   ImmutableList.of(
                       new NameMatcher("user", ImmutableList.of("User", "Parent"), true)))),
-          /* lookupService= */ "service1",
+          /* lookupService= */ "foo.google.com",
           /* lookupServiceTimeoutInMillis= */ TimeUnit.SECONDS.toMillis(2),
           /* maxAgeInMillis= */ TimeUnit.SECONDS.toMillis(300),
           /* staleAgeInMillis= */ TimeUnit.SECONDS.toMillis(240),
@@ -70,27 +76,24 @@ public class RlsRequestFactoryTest {
     metadata.put(Metadata.Key.of("X-Google-Id", Metadata.ASCII_STRING_MARSHALLER), "123");
     metadata.put(Metadata.Key.of("foo", Metadata.ASCII_STRING_MARSHALLER), "bar");
 
-    RouteLookupRequest request = factory.create("foo.com", "service1/create", metadata);
-
+    RouteLookupRequest request = factory.create("service1", "create", metadata);
     assertThat(request.getTargetType()).isEqualTo("grpc");
     assertThat(request.getPath()).isEqualTo("service1/create");
-    assertThat(request.getServer()).isEqualTo("foo.com");
+    assertThat(request.getServer()).isEqualTo("foo.google.com");
     assertThat(request.getKeyMap()).containsExactly("user", "test", "id", "123");
   }
 
   @Test
-  @Ignore("grpcKeyBuilder is always optional")
   public void create_missingRequiredHeader() {
     Metadata metadata = new Metadata();
-    metadata.put(Metadata.Key.of("X-Google-Id", Metadata.ASCII_STRING_MARSHALLER), "123");
-    metadata.put(Metadata.Key.of("foo", Metadata.ASCII_STRING_MARSHALLER), "bar");
 
     try {
-      RouteLookupRequest unused = factory.create("foo.com", "/service1/create", metadata);
+      RouteLookupRequest unused = factory.create("service2", "create", metadata);
       fail();
-    } catch (IllegalStateException e) {
-      assertThat(e).hasMessageThat().startsWith("Required header not found:");
-      assertThat(e).hasMessageThat().contains("user");
+    } catch (StatusRuntimeException e) {
+      assertThat(e.getStatus().getCode()).isEqualTo(Code.INVALID_ARGUMENT);
+      assertThat(e.getStatus().getDescription())
+          .isEqualTo("Missing mandatory metadata(user) not found");
     }
   }
 
@@ -101,11 +104,11 @@ public class RlsRequestFactoryTest {
     metadata.put(Metadata.Key.of("Password", Metadata.ASCII_STRING_MARSHALLER), "hunter2");
     metadata.put(Metadata.Key.of("foo", Metadata.ASCII_STRING_MARSHALLER), "bar");
 
-    RouteLookupRequest request = factory.create("foo.com", "/service1/update", metadata);
+    RouteLookupRequest request = factory.create("service1" , "update", metadata);
 
     assertThat(request.getTargetType()).isEqualTo("grpc");
     assertThat(request.getPath()).isEqualTo("service1/update");
-    assertThat(request.getServer()).isEqualTo("foo.com");
+    assertThat(request.getServer()).isEqualTo("foo.google.com");
     assertThat(request.getKeyMap()).containsExactly("user", "test", "password", "hunter2");
   }
 
@@ -116,11 +119,11 @@ public class RlsRequestFactoryTest {
     metadata.put(Metadata.Key.of("X-Google-Id", Metadata.ASCII_STRING_MARSHALLER), "123");
     metadata.put(Metadata.Key.of("foo", Metadata.ASCII_STRING_MARSHALLER), "bar");
 
-    RouteLookupRequest request = factory.create("foo.com", "/service1/update", metadata);
+    RouteLookupRequest request = factory.create("service1", "update", metadata);
 
     assertThat(request.getTargetType()).isEqualTo("grpc");
     assertThat(request.getPath()).isEqualTo("service1/update");
-    assertThat(request.getServer()).isEqualTo("foo.com");
+    assertThat(request.getServer()).isEqualTo("foo.google.com");
     assertThat(request.getKeyMap()).containsExactly("user", "test");
   }
 
@@ -131,11 +134,11 @@ public class RlsRequestFactoryTest {
     metadata.put(Metadata.Key.of("X-Google-Id", Metadata.ASCII_STRING_MARSHALLER), "123");
     metadata.put(Metadata.Key.of("foo", Metadata.ASCII_STRING_MARSHALLER), "bar");
 
-    RouteLookupRequest request = factory.create("foo.com", "/service999/update", metadata);
+    RouteLookupRequest request = factory.create("service999", "update", metadata);
 
     assertThat(request.getTargetType()).isEqualTo("grpc");
     assertThat(request.getPath()).isEqualTo("service999/update");
-    assertThat(request.getServer()).isEqualTo("foo.com");
+    assertThat(request.getServer()).isEqualTo("foo.google.com");
     assertThat(request.getKeyMap()).isEmpty();
   }
 
@@ -146,11 +149,11 @@ public class RlsRequestFactoryTest {
     metadata.put(Metadata.Key.of("X-Google-Id", Metadata.ASCII_STRING_MARSHALLER), "123");
     metadata.put(Metadata.Key.of("foo", Metadata.ASCII_STRING_MARSHALLER), "bar");
 
-    RouteLookupRequest request = factory.create("foo.com", "/service3/update", metadata);
+    RouteLookupRequest request = factory.create("service3", "update", metadata);
 
     assertThat(request.getTargetType()).isEqualTo("grpc");
     assertThat(request.getPath()).isEqualTo("service3/update");
-    assertThat(request.getServer()).isEqualTo("foo.com");
+    assertThat(request.getServer()).isEqualTo("foo.google.com");
     assertThat(request.getKeyMap()).containsExactly("user", "test");
   }
 }

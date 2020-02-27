@@ -1,8 +1,8 @@
 package io.grpc.rls;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
-import static io.opencensus.internal.Utils.checkNotNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 

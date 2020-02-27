@@ -88,7 +88,7 @@ final class RlsPicker extends SubchannelPicker {
 
     String[] methodName = args.getMethodDescriptor().getFullMethodName().split("/", 2);
     RouteLookupRequest request =
-        requestFactory.create(methodName[0], methodName[1], args.getHeaders());
+        requestFactory.create( methodName[0], methodName[1], args.getHeaders());
     final CachedResponse response = rlsClient.get(request);
 
     if (response.hasValidData()) {

@@ -22,6 +22,8 @@ import com.google.common.base.MoreObjects;
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Table;
 import io.grpc.Metadata;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.rls.RlsProtoData.GrpcKeyBuilder;
 import io.grpc.rls.RlsProtoData.GrpcKeyBuilder.Name;
 import io.grpc.rls.RlsProtoData.NameMatcher;
@@ -38,14 +40,14 @@ import javax.annotation.CheckReturnValue;
  */
 public final class RlsRequestFactory {
 
-  private final String lookupService;
+  private final String target;
   // table of Path(serviceName.methodName or serviceName.*), rls request headerName, header fields
   private final Table<String, String, NameMatcher> keyBuilderTable;
 
   /** Constructor. */
   public RlsRequestFactory(RouteLookupConfig rlsConfig) {
     checkNotNull(rlsConfig, "rlsConfig");
-    this.lookupService = rlsConfig.getLookupService();
+    this.target = rlsConfig.getLookupService();
     this.keyBuilderTable = createKeyBuilderTable(rlsConfig);
   }
 
@@ -61,10 +63,11 @@ public final class RlsRequestFactory {
           table.put(
               path,
               nameMatcher.getKey(),
-              new NameMatcher(nameMatcher.getKey(), requestHeaders, /* optional= */ true));
+              new NameMatcher(nameMatcher.getKey(), requestHeaders, nameMatcher.isOptional()));
         }
       }
     }
+    System.out.println("table: " + table);
     return table;
   }
 
@@ -77,21 +80,23 @@ public final class RlsRequestFactory {
     if (method.charAt(0) == '/') {
       method = method.substring(1);
     }
-    Map<String, NameMatcher> keyBuilder = keyBuilderTable.row(service + "/" + method);
+    String path = service + "/" + method;
+    Map<String, NameMatcher> keyBuilder = keyBuilderTable.row(path);
     // if no matching keyBuilder found, fall back to wildcard match (ServiceName/*)
     if (keyBuilder.isEmpty()) {
       keyBuilder = keyBuilderTable.row(service + "/*");
     }
     Map<String, String> rlsRequestHeaders = createRequestHeaders(metadata, keyBuilder);
-    return new RouteLookupRequest(service, method, "grpc", rlsRequestHeaders);
+    return new RouteLookupRequest(target, path, "grpc", rlsRequestHeaders);
   }
 
   private Map<String, String> createRequestHeaders(
       Metadata metadata, Map<String, NameMatcher> keyBuilder) {
     Map<String, String> rlsRequestHeaders = new HashMap<>();
     for (Map.Entry<String, NameMatcher> entry : keyBuilder.entrySet()) {
+      NameMatcher nameMatcher = entry.getValue();
       String value = null;
-      for (String requestHeaderName : entry.getValue().names()) {
+      for (String requestHeaderName : nameMatcher.names()) {
         value = metadata.get(Metadata.Key.of(requestHeaderName, Metadata.ASCII_STRING_MARSHALLER));
         if (value != null) {
           break;
@@ -99,6 +104,10 @@ public final class RlsRequestFactory {
       }
       if (value != null) {
         rlsRequestHeaders.put(entry.getKey(), value);
+      } else if (!nameMatcher.isOptional()) {
+        throw new StatusRuntimeException(
+            Status.INVALID_ARGUMENT.withDescription(
+                String.format("Missing mandatory metadata(%s) not found", entry.getKey())));
       }
     }
     return rlsRequestHeaders;
@@ -107,7 +116,7 @@ public final class RlsRequestFactory {
   @Override
   public String toString() {
     return MoreObjects.toStringHelper(this)
-        .add("lookupService", lookupService)
+        .add("lookupService", target)
         .add("keyBuilderTable", keyBuilderTable)
         .toString();
   }
