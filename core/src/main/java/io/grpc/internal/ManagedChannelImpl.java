@@ -65,6 +65,7 @@ import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
 import io.grpc.NameResolver;
 import io.grpc.NameResolver.ConfigOrError;
+import io.grpc.NameResolver.Factory;
 import io.grpc.NameResolver.ResolutionResult;
 import io.grpc.NameResolverRegistry;
 import io.grpc.ProxyDetector;
@@ -1263,6 +1264,60 @@ final class ManagedChannelImpl extends ManagedChannel implements
 
       syncContext.execute(new AddOobChannel());
       return oobChannel;
+    }
+
+    @Override
+    public ManagedChannel createResolvingOobChannel(String target) {
+      final class ResolvingOobChannelBuilder extends AbstractManagedChannelImplBuilder<ResolvingOobChannelBuilder> {
+        int defaultPort = -1;
+        @SuppressWarnings("HidingField") // superclass defined it as private
+        NameResolverRegistry nameResolverRegistry;
+        NameResolver.Factory nameResolverFactory;
+
+        ResolvingOobChannelBuilder(String target) {
+          super(target);
+        }
+
+        @Override
+        protected ObjectPool<? extends Executor> getOffloadExecutorPool() {
+          return super.getOffloadExecutorPool();
+        }
+
+        @Override
+        Factory getNameResolverFactory() {
+          return nameResolverFactory;
+        }
+
+        @Override
+        public int getDefaultPort() {
+          return defaultPort;
+        }
+
+        @Override
+        protected ClientTransportFactory buildTransportFactory() {
+          throw new UnsupportedOperationException();
+        }
+      }
+
+      //TODO figure out what is need to be wrapped (e.g. transport factory?)
+      ResolvingOobChannelBuilder builder = new ResolvingOobChannelBuilder(target);
+      builder.offloadExecutorPool = offloadExecutorHolder.pool;
+      builder.executorPool = executorPool;
+      builder.maxTraceEvents = maxTraceEvents;
+      builder.nameResolverRegistry = nameResolverRegistry;
+      builder.nameResolverFactory = nameResolverFactory;
+      builder.proxyDetector = nameResolverArgs.getProxyDetector();
+      builder.defaultPort = nameResolverArgs.getDefaultPort();
+      builder.userAgent = userAgent;
+      return
+          new ManagedChannelImpl(
+              builder,
+              transportFactory,
+              backoffPolicyProvider,
+              balancerRpcExecutorPool,
+              stopwatchSupplier,
+              Collections.<ClientInterceptor>emptyList(),
+              timeProvider);
     }
 
     @Override

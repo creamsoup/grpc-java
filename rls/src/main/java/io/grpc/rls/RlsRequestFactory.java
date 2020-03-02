@@ -67,7 +67,6 @@ public final class RlsRequestFactory {
         }
       }
     }
-    System.out.println("table: " + table);
     return table;
   }
 

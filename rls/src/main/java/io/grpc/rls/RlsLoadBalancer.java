@@ -23,6 +23,7 @@ import io.grpc.ChannelLogger.ChannelLogLevel;
 import io.grpc.ConnectivityStateInfo;
 import io.grpc.EquivalentAddressGroup;
 import io.grpc.LoadBalancer;
+import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import java.util.Collections;
@@ -36,7 +37,7 @@ final class RlsLoadBalancer extends LoadBalancer {
   private final Helper helper;
   private LbPolicyConfiguration lbPolicyConfiguration;
   private AsyncCachingRlsClient routeLookupClient;
-  private Subchannel rlsServerChannel;
+  private ManagedChannel rlsServerChannel;
   private RlsPicker rlsPicker;
 
   RlsLoadBalancer(Helper helper) {
@@ -68,20 +69,17 @@ final class RlsLoadBalancer extends LoadBalancer {
           rlsServerChannel.shutdown();
         }
 
-        EquivalentAddressGroup eag = RlsUtil.createEag(rlsConfig.getLookupService());
-        rlsServerChannel = helper.createSubchannel(
-            CreateSubchannelArgs.newBuilder()
-                .setAddresses(eag)
-                .build());
+        // TODO how to tell 80 or 443 or port??
+        System.out.println("helper's authority: " + helper.getAuthority());
+        rlsServerChannel = helper.createResolvingOobChannel(rlsConfig.getLookupService());
         AdaptiveThrottler throttler = AdaptiveThrottler.builder().build();
         ChildLoadBalancerHelper childBalancerHelper = new ChildLoadBalancerHelper(helper);
         ChildLbResolvedAddressFactory childLbResolvedAddressFactory =
             new ChildLbResolvedAddressFactory(resolvedAddresses);
         final AsyncCachingRlsClient client =
             AsyncCachingRlsClient.newBuilder()
-                .setChildLbResolvedAddressesFactory(
-                    childLbResolvedAddressFactory)
-                .setSubchannel(rlsServerChannel)
+                .setChildLbResolvedAddressesFactory(childLbResolvedAddressFactory)
+                .setChannel(rlsServerChannel)
                 .setScheduledExecutorService(helper.getScheduledExecutorService())
                 .setExecutor(helper.getSynchronizationContext())
                 .setMaxAgeMillis(rlsConfig.getMaxAgeInMillis())
@@ -109,9 +107,7 @@ final class RlsLoadBalancer extends LoadBalancer {
 
   @Override
   public void requestConnection() {
-    if (rlsServerChannel != null) {
-      rlsServerChannel.requestConnection();
-    }
+    // ???
   }
 
   @Override
@@ -129,12 +125,13 @@ final class RlsLoadBalancer extends LoadBalancer {
     }
   }
 
-  public static class ChildLbResolvedAddressFactory {
+  /** Factory to created {@link io.grpc.LoadBalancer.ResolvedAddresses} passed to child lb. */
+  static final class ChildLbResolvedAddressFactory {
 
     private final List<EquivalentAddressGroup> addresses;
     private final Attributes attributes;
 
-    public ChildLbResolvedAddressFactory(ResolvedAddresses resolvedAddresses) {
+    ChildLbResolvedAddressFactory(ResolvedAddresses resolvedAddresses) {
       checkNotNull(resolvedAddresses, "resolvedAddresses");
       this.addresses = Collections.unmodifiableList(resolvedAddresses.getAddresses());
       this.attributes = resolvedAddresses.getAttributes();

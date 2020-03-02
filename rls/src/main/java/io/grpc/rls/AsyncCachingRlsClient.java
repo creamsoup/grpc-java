@@ -25,15 +25,14 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import io.grpc.Attributes;
 import io.grpc.ConnectivityState;
-import io.grpc.ConnectivityStateInfo;
 import io.grpc.EquivalentAddressGroup;
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.CreateSubchannelArgs;
 import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
-import io.grpc.LoadBalancer.SubchannelStateListener;
 import io.grpc.LoadBalancerProvider;
+import io.grpc.ManagedChannel;
 import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
 import io.grpc.internal.AtomicBackoff;
@@ -45,7 +44,6 @@ import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.LruCache.EvictionListener;
 import io.grpc.rls.LruCache.EvictionType;
 import io.grpc.rls.RlsLoadBalancer.ChildLbResolvedAddressFactory;
-import io.grpc.rls.RlsPicker.RlsSubchannelStateListener;
 import io.grpc.rls.RlsProtoConverters.RouteLookupResponseConverter;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import io.grpc.rls.RlsProtoData.RouteLookupResponse;
@@ -100,12 +98,10 @@ final class AsyncCachingRlsClient {
   private final long backoffExpirationTimeMillis;
   private final ChildLoadBalancerHelper helper;
   private final LbPolicyConfiguration lbPolicyConfig;
-  private final Subchannel subchannel;
+  private final ManagedChannel channel;
   private final ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
   @Nullable
   private RouteLookupServiceStub stub;
-  private RlsSubchannelStateListener oobChannelStateListener;
-  private ConnectivityState oobChannelState = ConnectivityState.IDLE;
 
   AsyncCachingRlsClient(final Builder builder) {
     this.scheduledExecutorService =
@@ -130,56 +126,10 @@ final class AsyncCachingRlsClient {
             maxSizeBytes, builder.evictionListener, scheduledExecutorService, ticker);
     this.helper = checkNotNull(builder.helper, "helper");
     this.lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
-    this.subchannel = checkNotNull(builder.subchannel, "subchannel");
-    helper.getSynchronizationContext().execute(
-        new Runnable() {
-          @Override
-          public void run() {
-            builder.subchannel.start(new SubchannelStateListener() {
-              @Override
-              public void onSubchannelState(ConnectivityStateInfo newState) {
-                // TODO(creamsoup) this start being async make everything failed until this happens.
-                //  possibly prevent this?
-                handleRlsServerChannelStatus(newState.getState());
-                if (oobChannelStateListener != null) {
-                  oobChannelStateListener
-                      .onSubchannelStateChange("oobChannel", newState.getState());
-                }
-              }
-            });
-            subchannel.requestConnection();
-          }
-        });
+    this.channel = checkNotNull(builder.channel, "subchannel");
+    this.stub = RouteLookupServiceGrpc.newStub(channel);
     this.childLbResolvedAddressFactory =
         checkNotNull(builder.childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
-  }
-
-  private void handleRlsServerChannelStatus(ConnectivityState state) {
-    ConnectivityState oobChannelStateCopy = oobChannelState;
-    oobChannelState = state;
-    switch (state) {
-      case READY:
-        this.stub = RouteLookupServiceGrpc.newStub(subchannel.asChannel());
-        if (oobChannelStateCopy == ConnectivityState.TRANSIENT_FAILURE) {
-          for (CacheEntry cacheEntry : this.linkedHashLruCache.values()) {
-            if (cacheEntry instanceof BackoffCacheEntry) {
-              ((BackoffCacheEntry) cacheEntry).forceRefresh();
-            }
-          }
-        }
-        return;
-      case TRANSIENT_FAILURE:
-        return;
-      case IDLE:
-        // fall-through
-      case CONNECTING:
-        // fall-through
-      case SHUTDOWN:
-        this.stub = null;
-        return;
-      default:
-        throw new AssertionError();
-    }
   }
 
   @CheckReturnValue
@@ -741,7 +691,7 @@ final class AsyncCachingRlsClient {
     private Ticker ticker = new SystemTicker();
     private Throttler throttler = new HappyThrottler();
     private EvictionListener<RouteLookupRequest, CacheEntry> evictionListener = null;
-    private Subchannel subchannel;
+    private ManagedChannel channel;
     private ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
 
     public Builder setScheduledExecutorService(
@@ -812,8 +762,8 @@ final class AsyncCachingRlsClient {
       return this;
     }
 
-    public Builder setSubchannel(Subchannel rlsServerChannel) {
-      this.subchannel = checkNotNull(rlsServerChannel, "rlsServerChannel");
+    public Builder setChannel(ManagedChannel rlsServerChannel) {
+      this.channel = checkNotNull(rlsServerChannel, "rlsServerChannel");
       return this;
     }
 
