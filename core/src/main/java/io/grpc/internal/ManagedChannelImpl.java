@@ -561,6 +561,7 @@ final class ManagedChannelImpl extends ManagedChannel implements
       List<ClientInterceptor> interceptors,
       final TimeProvider timeProvider) {
     this.target = checkNotNull(builder.target, "target");
+    new Throwable("target: " + target).printStackTrace(System.out);
     this.logId = InternalLogId.allocate("Channel", target);
     this.timeProvider = checkNotNull(timeProvider, "timeProvider");
     this.executorPool = checkNotNull(builder.executorPool, "executorPool");

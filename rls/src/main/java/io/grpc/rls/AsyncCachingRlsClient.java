@@ -545,6 +545,8 @@ final class AsyncCachingRlsClient {
       this.status = checkNotNull(status, "status");
       backoffState = checkNotNull(backoff, "backoff").getState();
       backoffState.backoff();
+      System.out.println("backoff: " + status);
+      status.asException().printStackTrace(System.out);
       this.scheduledFuture = scheduledExecutorService.schedule(
           new Runnable() {
             @Override
