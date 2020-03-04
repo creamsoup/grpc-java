@@ -71,6 +71,7 @@ final class RlsLoadBalancer extends LoadBalancer {
 
         // TODO how to tell 80 or 443 or port??
         System.out.println("helper's authority: " + helper.getAuthority());
+        System.out.println("rlsConfig lookupService: " + rlsConfig.getLookupService());
         rlsServerChannel = helper.createResolvingOobChannel(rlsConfig.getLookupService());
         AdaptiveThrottler throttler = AdaptiveThrottler.builder().build();
         ChildLoadBalancerHelper childBalancerHelper = new ChildLoadBalancerHelper(helper);
@@ -138,12 +139,13 @@ final class RlsLoadBalancer extends LoadBalancer {
     }
 
     public ResolvedAddresses create(Object childLbConfig) {
-      return
-          ResolvedAddresses.newBuilder()
-              .setAddresses(addresses)
-              .setAttributes(attributes)
-              .setLoadBalancingPolicyConfig(childLbConfig)
-              .build();
+      //TODO figure out what to pass
+//      return
+      return ResolvedAddresses.newBuilder()
+          .setAddresses(addresses)
+          .setAttributes(attributes)
+          .setLoadBalancingPolicyConfig(childLbConfig)
+          .build();
     }
   }
 }

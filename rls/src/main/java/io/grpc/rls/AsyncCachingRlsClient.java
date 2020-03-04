@@ -29,6 +29,7 @@ import io.grpc.EquivalentAddressGroup;
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.CreateSubchannelArgs;
 import io.grpc.LoadBalancer.Helper;
+import io.grpc.LoadBalancer.ResolvedAddresses;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancerProvider;
@@ -100,8 +101,7 @@ final class AsyncCachingRlsClient {
   private final LbPolicyConfiguration lbPolicyConfig;
   private final ManagedChannel channel;
   private final ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
-  @Nullable
-  private RouteLookupServiceStub stub;
+  private final RouteLookupServiceStub stub;
 
   AsyncCachingRlsClient(final Builder builder) {
     this.scheduledExecutorService =
@@ -144,17 +144,21 @@ final class AsyncCachingRlsClient {
       return response;
     }
     io.grpc.lookup.v1.RouteLookupRequest rlsRequest = reqConverter.convert(request);
+    System.out.println("time: " + System.currentTimeMillis());
+    System.out.println("channel status: " + channel.getState(false));
     stub.withDeadlineAfter(callTimeoutMillis, TimeUnit.MILLISECONDS)
         .routeLookup(
             rlsRequest,
             new StreamObserver<io.grpc.lookup.v1.RouteLookupResponse>() {
               @Override
               public void onNext(io.grpc.lookup.v1.RouteLookupResponse value) {
+                System.out.println("woohoo: " + value);
                 response.set(respConverter.reverse().convert(value));
               }
 
               @Override
               public void onError(Throwable t) {
+                new RuntimeException("oops " + System.currentTimeMillis(), t).printStackTrace(System.out);
                 response.setException(t);
                 throttler.registerBackendResponse(false);
               }
@@ -449,7 +453,9 @@ final class AsyncCachingRlsClient {
         ConfigOrError lbConfig = lbProvider
             .parseLoadBalancingPolicyConfig(
                 childPolicyWrapper.getChildPolicy().getEffectiveChildPolicy(response.getTarget()));
-        lb.handleResolvedAddresses(childLbResolvedAddressFactory.create(lbConfig.getConfig()));
+        ResolvedAddresses resolvedAddresses = childLbResolvedAddressFactory
+            .create(lbConfig.getConfig());
+        lb.handleResolvedAddresses(resolvedAddresses);
         lb.requestConnection();
       }
     }

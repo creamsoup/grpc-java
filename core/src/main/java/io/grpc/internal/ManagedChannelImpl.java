@@ -558,7 +558,6 @@ final class ManagedChannelImpl extends ManagedChannel implements
       List<ClientInterceptor> interceptors,
       final TimeProvider timeProvider) {
     this.target = checkNotNull(builder.target, "target");
-    new Throwable("target: " + target).printStackTrace(System.out);
     this.logId = InternalLogId.allocate("Channel", target);
     this.timeProvider = checkNotNull(timeProvider, "timeProvider");
     this.executorPool = checkNotNull(builder.executorPool, "executorPool");
@@ -1296,6 +1295,7 @@ final class ManagedChannelImpl extends ManagedChannel implements
       }
 
       //TODO figure out what is need to be wrapped (e.g. transport factory?)
+      System.out.println("creating oob channel for "+target);
       ResolvingOobChannelBuilder builder = new ResolvingOobChannelBuilder(target);
       builder.offloadExecutorPool = offloadExecutorHolder.pool;
       builder.executorPool = executorPool;

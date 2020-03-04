@@ -46,26 +46,24 @@ public final class FakeNameResolver extends NameResolver {
   }
 
   @Override
-  @SuppressWarnings("deprecation")
   public void start(Listener2 listener) {
     listener.onResult(ResolutionResult.newBuilder()
-        // .setAddresses(Collections.<EquivalentAddressGroup>emptyList())
         .setAddresses(
             Collections.singletonList(
                 new EquivalentAddressGroup(new InetSocketAddress("localhost", 9999))))
         .setAttributes(
             Attributes.newBuilder()
                 .set(
-                    io.grpc.internal.GrpcAttributes.ATTR_LB_ADDRS,
+                    io.grpc.grpclb.GrpclbConstants.ATTR_LB_ADDRS,
                     ImmutableList.of(
                         new EquivalentAddressGroup(
-                            // new InetSocketAddress("localhost", 7777), // for grpclb
                             new InetSocketAddress("localhost", 12345), // for rls
                             Attributes.newBuilder()
-                                .set(GrpcAttributes.ATTR_LB_ADDR_AUTHORITY, "localhost")
+                                .set(io.grpc.grpclb.GrpclbConstants.ATTR_LB_ADDR_AUTHORITY,
+                                    "localhost")
                                 .build())))
 
-              .build())
+                .build())
         .build());
   }
 

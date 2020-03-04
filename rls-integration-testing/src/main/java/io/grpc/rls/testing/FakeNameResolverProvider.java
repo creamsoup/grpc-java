@@ -41,6 +41,9 @@ public final class FakeNameResolverProvider extends NameResolverProvider {
 
   @Override
   public NameResolver newNameResolver(URI targetUri, Args args) {
-    return new FakeNameResolver(targetUri, args);
+    if ("fake-rls".equals(targetUri.getScheme())) {
+      return new FakeNameResolver(targetUri, args);
+    }
+    return null;
   }
 }

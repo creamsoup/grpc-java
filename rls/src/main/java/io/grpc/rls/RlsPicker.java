@@ -88,12 +88,14 @@ final class RlsPicker extends SubchannelPicker {
 
     String[] methodName = args.getMethodDescriptor().getFullMethodName().split("/", 2);
     RouteLookupRequest request =
-        requestFactory.create( methodName[0], methodName[1], args.getHeaders());
+        requestFactory.create(methodName[0], methodName[1], args.getHeaders());
     final CachedResponse response = rlsClient.get(request);
 
     if (response.hasValidData()) {
       ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
-      switch (childPolicyWrapper.getConnectivityState()) {
+      ConnectivityState connectivityState = childPolicyWrapper.getConnectivityState();
+      System.out.println("connectivity status: " + connectivityState);
+      switch (connectivityState) {
         case CONNECTING:
           return handlePendingRequest(args);
         case IDLE:
@@ -102,6 +104,7 @@ final class RlsPicker extends SubchannelPicker {
           }
           return childPolicyWrapper.getPicker().pickSubchannel(args);
         case READY:
+          System.out.println("handle READY " + childPolicyWrapper.getSubchannel().toString());
           return childPolicyWrapper.getPicker().pickSubchannel(args);
         case TRANSIENT_FAILURE:
           return handleError(Status.INTERNAL);
@@ -167,6 +170,7 @@ final class RlsPicker extends SubchannelPicker {
         return PickResult.withError(Status.fromThrowable(e));
       }
     }
+    System.out.println("FALLBACK!!!");
     switch (fallbackChildPolicyWrapper.getConnectivityState()) {
       case CONNECTING:
         return PickResult.withNoResult();

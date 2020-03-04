@@ -71,8 +71,8 @@ public final class Client {
     System.out.println("register request1 response1");
     RouteLookupRequest request1 =
         createRequest(
-            "grpc.lookup.v1.BackendService",
-            "Echo",
+            "localhost:8972",
+            "grpc.lookup.v1.BackendService/Echo",
             Collections.<String, String>emptyMap());
     RouteLookupResponse response1 = createResponse("backend9001", "bar");
     rlsControlStub.registerReturnValue(createCacheRequest(request1, response1, 10));
@@ -81,8 +81,8 @@ public final class Client {
     System.out.println("register request2 response2");
     RouteLookupRequest request2 =
         createRequest(
-            "grpc.lookup.v1.BackendService",
-            "Echo",
+            "localhost:8972",
+            "grpc.lookup.v1.BackendService/Echo",
             ImmutableMap.of("user", "creamsoup"));
     RouteLookupResponse response2 = createResponse("backend9002and3", "baz");
     rlsControlStub.registerReturnValue(createCacheRequest(request2, response2, 100));
@@ -91,8 +91,8 @@ public final class Client {
     System.out.println("register request3 response3");
     RouteLookupRequest request3 =
         createRequest(
-            "grpc.lookup.v1.BackendService",
-            "Echo",
+            "localhost:8972",
+            "grpc.lookup.v1.BackendService/Echo",
             ImmutableMap.of("id", "ididid"));
     RouteLookupResponse response3 =
         createResponse("random", "foo should have been the first one but who cares");
@@ -179,7 +179,7 @@ public final class Client {
                   System.out.println("done " + iCopy);
                 }
               });
-      Thread.sleep(100);
+      Thread.sleep(300);
     }
     latch.await();
   }
