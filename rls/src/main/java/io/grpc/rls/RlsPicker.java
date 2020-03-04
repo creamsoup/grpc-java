@@ -94,7 +94,6 @@ final class RlsPicker extends SubchannelPicker {
     if (response.hasValidData()) {
       ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
       ConnectivityState connectivityState = childPolicyWrapper.getConnectivityState();
-      System.out.println("connectivity status: " + connectivityState);
       switch (connectivityState) {
         case CONNECTING:
           return handlePendingRequest(args);
@@ -104,7 +103,6 @@ final class RlsPicker extends SubchannelPicker {
           }
           return childPolicyWrapper.getPicker().pickSubchannel(args);
         case READY:
-          System.out.println("handle READY " + childPolicyWrapper.getSubchannel().toString());
           return childPolicyWrapper.getPicker().pickSubchannel(args);
         case TRANSIENT_FAILURE:
           return handleError(Status.INTERNAL);

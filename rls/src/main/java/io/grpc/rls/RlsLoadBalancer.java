@@ -139,8 +139,6 @@ final class RlsLoadBalancer extends LoadBalancer {
     }
 
     public ResolvedAddresses create(Object childLbConfig) {
-      //TODO figure out what to pass
-//      return
       return ResolvedAddresses.newBuilder()
           .setAddresses(addresses)
           .setAttributes(attributes)

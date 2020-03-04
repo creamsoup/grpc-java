@@ -1295,7 +1295,6 @@ final class ManagedChannelImpl extends ManagedChannel implements
       }
 
       //TODO figure out what is need to be wrapped (e.g. transport factory?)
-      System.out.println("creating oob channel for "+target);
       ResolvingOobChannelBuilder builder = new ResolvingOobChannelBuilder(target);
       builder.offloadExecutorPool = offloadExecutorHolder.pool;
       builder.executorPool = executorPool;

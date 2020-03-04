@@ -1090,8 +1090,10 @@ final class GrpclbState {
         if (pickIndex == pickList.size()) {
           pickIndex = 0;
         }
-        System.out.println("grpclb pick: "+args);
-        return pick.picked(args.getHeaders());
+
+        PickResult picked = pick.picked(args.getHeaders());
+        System.out.println("grpclb pick result: " + picked);
+        return picked;
       }
     }
 

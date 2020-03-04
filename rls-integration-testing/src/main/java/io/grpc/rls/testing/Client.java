@@ -104,7 +104,7 @@ public final class Client {
     System.out.println("=========================================");
 
     BackendServiceStub bStub = BackendServiceGrpc.newStub(clientChannel);
-    final int iter = 3;
+    final int iter = 10;
     final CountDownLatch latch = new CountDownLatch(3 * iter);
     for (int i = 0; i < iter; i++) {
       System.out.println("iter " + i + " to backend1(9001): " + System.currentTimeMillis());
@@ -179,7 +179,7 @@ public final class Client {
                   System.out.println("done " + iCopy);
                 }
               });
-      Thread.sleep(300);
+      Thread.sleep(100);
     }
     latch.await();
   }
