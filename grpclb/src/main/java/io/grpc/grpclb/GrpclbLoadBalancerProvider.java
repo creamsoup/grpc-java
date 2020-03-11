@@ -68,6 +68,7 @@ public final class GrpclbLoadBalancerProvider extends LoadBalancerProvider {
   @Override
   public ConfigOrError parseLoadBalancingPolicyConfig(
       Map<String, ?> rawLoadBalancingConfigPolicy) {
+    System.out.println("Parsing grpclb config: " + rawLoadBalancingConfigPolicy);
     try {
       return parseLoadBalancingConfigPolicyInternal(rawLoadBalancingConfigPolicy);
     } catch (RuntimeException e) {

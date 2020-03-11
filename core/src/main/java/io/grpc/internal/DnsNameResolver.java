@@ -130,8 +130,8 @@ public class DnsNameResolver extends NameResolver {
   protected volatile AddressResolver addressResolver = JdkAddressResolver.INSTANCE;
   private final AtomicReference<ResourceResolver> resourceResolver = new AtomicReference<>();
 
-  private final String authority;
-  private final String host;
+  final String authority;
+  final String host;
   private final int port;
 
   /** Executor that will be used if an Executor is not provide via {@link NameResolver.Args}. */
@@ -331,7 +331,11 @@ public class DnsNameResolver extends NameResolver {
             resolutionResultBuilder.setAttributes(result.attributes);
           }
         }
-        savedListener.onResult(resolutionResultBuilder.build());
+        ResolutionResult resolutionResult = resolutionResultBuilder.build();
+        System.out.println(
+            "Resolved result for target authority: " + authority
+                + " target: " + host + resolutionResult);
+        savedListener.onResult(resolutionResult);
       } catch (IOException e) {
         savedListener.onError(
             Status.UNAVAILABLE.withDescription("Unable to resolve host " + host).withCause(e));
