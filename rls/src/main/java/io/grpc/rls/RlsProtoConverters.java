@@ -116,7 +116,7 @@ public final class RlsProtoConverters {
       Long staleAge =
           convertTimeIfNotNull(
               TimeUnit.SECONDS, TimeUnit.MILLISECONDS, JsonUtil.getNumberAsLong(json, "staleAge"));
-      long cacheSize = JsonUtil.getNumberAsLong(json, "cacheSizeBytes");
+      Long cacheSize = JsonUtil.getNumberAsLong(json, "cacheSizeBytes");
       List<String> validTargets = JsonUtil.checkStringList(JsonUtil.getList(json, "validTargets"));
       String defaultTarget = JsonUtil.getString(json, "defaultTarget");
       RequestProcessingStrategy strategy =
@@ -128,7 +128,7 @@ public final class RlsProtoConverters {
           timeout,
           maxAge,
           staleAge,
-          cacheSize,
+          cacheSize != null ? cacheSize : Integer.MAX_VALUE,
           validTargets,
           defaultTarget,
           strategy);

@@ -1,5 +1,6 @@
 package io.grpc.rls.testing;
 
+import io.grpc.ManagedChannelBuilder;
 import io.grpc.Server;
 import io.grpc.lookup.v1.RouteLookupRequest;
 import io.grpc.lookup.v1.RouteLookupResponse;

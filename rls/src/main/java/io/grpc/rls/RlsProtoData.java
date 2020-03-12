@@ -232,13 +232,14 @@ public final class RlsProtoData {
       this.validTargets = ImmutableList.copyOf(checkNotNull(validTargets, "validTargets"));
       this.defaultTarget = defaultTarget;
       this.requestProcessingStrategy = requestProcessingStrategy;
-      checkState(
-          (requestProcessingStrategy == RequestProcessingStrategy.SYNC_LOOKUP_CLIENT_SEES_ERROR
-              || requestProcessingStrategy
-              == RequestProcessingStrategy.ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS)
-              && !defaultTarget.isEmpty(),
-          "defaultTarget cannot be empty if strategy is %s",
-          requestProcessingStrategy);
+      //TODO this is wrong
+//      checkState(
+//          (requestProcessingStrategy == RequestProcessingStrategy.SYNC_LOOKUP_CLIENT_SEES_ERROR
+//              || requestProcessingStrategy
+//              == RequestProcessingStrategy.ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS)
+//              && !defaultTarget.isEmpty(),
+//          "defaultTarget cannot be empty if strategy is %s",
+//          requestProcessingStrategy);
     }
 
     /**
@@ -401,10 +402,10 @@ public final class RlsProtoData {
 
     private final boolean optional;
 
-    NameMatcher(String key, List<String> names, boolean optional) {
+    NameMatcher(String key, List<String> names, Boolean optional) {
       this.key = checkNotNull(key, "key");
       this.names = ImmutableList.copyOf(checkNotNull(names, "names"));
-      this.optional = optional;
+      this.optional = optional != null ? optional : true;
     }
 
     /** The name that will be used in the RLS key_map to refer to this value. */
