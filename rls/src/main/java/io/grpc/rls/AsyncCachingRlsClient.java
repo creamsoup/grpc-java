@@ -457,6 +457,12 @@ final class AsyncCachingRlsClient {
             .create(lbConfig.getConfig());
         lb.handleResolvedAddresses(resolvedAddresses);
         lb.requestConnection();
+      } else {
+        System.out.println("reusing childPolicyWrapper for " + response);
+        //TODO this is horrible fixme
+        helper.setTarget(childPolicyWrapper.getTarget());
+        helper.updateBalancingState(
+            childPolicyWrapper.getConnectivityState(), childPolicyWrapper.getPicker());
       }
     }
 

@@ -48,6 +48,7 @@ final class RlsLoadBalancer extends LoadBalancer {
   @SuppressWarnings("deprecation")
   public void handleSubchannelState(Subchannel subchannel, ConnectivityStateInfo stateInfo) {
     // this can be almost ignored, ACLBF may ask to different state to go shutdown...
+    System.out.println("handleSubchannelState: " + subchannel + " info: " + stateInfo);
     rlsPicker.handleSubchannelState(subchannel, stateInfo);
   }
 
