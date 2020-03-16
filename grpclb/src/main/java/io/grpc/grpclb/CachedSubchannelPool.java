@@ -67,7 +67,7 @@ final class CachedSubchannelPool implements SubchannelPool {
       subchannel.start(new SubchannelStateListener() {
         @Override
         public void onSubchannelState(ConnectivityStateInfo newState) {
-          // do nothing
+          handleSubchannelState(subchannel, newState);
         }
       });
     } else {

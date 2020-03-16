@@ -95,7 +95,7 @@ public class CachedSubchannelPoolTest {
       = ArgumentCaptor.forClass(CreateSubchannelArgs.class);
 
   @Before
-  @SuppressWarnings({"unchecked", "deprecation"})
+  @SuppressWarnings({"deprecation"})
   public void setUp() {
     doAnswer(new Answer<Subchannel>() {
         @Override

@@ -1,2 +1,4 @@
 #!/usr/bin/env bash
-./../gradlew run -PmainClass=io.grpc.rls.testing.Backend --args="$@"
+pushd `git rev-parse --show-toplevel`
+./gradlew :grpc-rls-integration-testing:run -PmainClass=io.grpc.rls.testing.Backend --args="$@"
+popd

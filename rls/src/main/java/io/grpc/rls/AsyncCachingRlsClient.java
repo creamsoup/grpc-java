@@ -822,6 +822,7 @@ final class AsyncCachingRlsClient {
     @Override
     @SuppressWarnings("deprecation")
     public Subchannel createSubchannel(List<EquivalentAddressGroup> addrs, Attributes attrs) {
+      new Throwable("old way").printStackTrace(System.out);
       Subchannel sc = super.createSubchannel(addrs, attrs);
       childPolicyWrapper.setSubchannel(sc);
       return sc;
@@ -829,6 +830,7 @@ final class AsyncCachingRlsClient {
 
     @Override
     public Subchannel createSubchannel(CreateSubchannelArgs args) {
+      new Throwable("new way").printStackTrace(System.out);
       Subchannel sc = super.createSubchannel(args);
       childPolicyWrapper.setSubchannel(sc);
       return sc;
