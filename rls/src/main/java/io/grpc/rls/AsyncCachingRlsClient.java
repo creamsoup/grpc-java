@@ -25,6 +25,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import io.grpc.Attributes;
 import io.grpc.ConnectivityState;
+import io.grpc.ConnectivityStateInfo;
 import io.grpc.EquivalentAddressGroup;
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.CreateSubchannelArgs;
@@ -32,6 +33,7 @@ import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.ResolvedAddresses;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
+import io.grpc.LoadBalancer.SubchannelStateListener;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.ManagedChannel;
 import io.grpc.NameResolver.ConfigOrError;
@@ -51,6 +53,7 @@ import io.grpc.rls.RlsProtoData.RouteLookupResponse;
 import io.grpc.rls.Throttler.ThrottledException;
 import io.grpc.stub.StreamObserver;
 import io.grpc.util.ForwardingLoadBalancerHelper;
+import io.grpc.util.ForwardingSubchannel;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -822,18 +825,34 @@ final class AsyncCachingRlsClient {
     @Override
     @SuppressWarnings("deprecation")
     public Subchannel createSubchannel(List<EquivalentAddressGroup> addrs, Attributes attrs) {
-      new Throwable("old way").printStackTrace(System.out);
-      Subchannel sc = super.createSubchannel(addrs, attrs);
-      childPolicyWrapper.setSubchannel(sc);
-      return sc;
+      return createSubchannel(CreateSubchannelArgs.newBuilder()
+          .setAddresses(addrs)
+          .setAttributes(attrs)
+          .build());
     }
 
     @Override
     public Subchannel createSubchannel(CreateSubchannelArgs args) {
-      new Throwable("new way").printStackTrace(System.out);
-      Subchannel sc = super.createSubchannel(args);
+      final Subchannel sc = super.createSubchannel(args);
       childPolicyWrapper.setSubchannel(sc);
-      return sc;
+      return new ForwardingSubchannel() {
+        @Override
+        protected Subchannel delegate() {
+          return sc;
+        }
+
+        @Override
+        public void start(final SubchannelStateListener listener) {
+          System.out.println("start is called!!!");
+          super.start(new SubchannelStateListener() {
+            @Override
+            public void onSubchannelState(ConnectivityStateInfo newState) {
+              System.out.println("!!! subchannel state changed (intercepted)");
+              listener.onSubchannelState(newState);
+            }
+          });
+        }
+      };
     }
   }
 
