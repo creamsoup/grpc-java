@@ -23,7 +23,6 @@ import com.google.common.annotations.VisibleForTesting;
 import io.grpc.Attributes;
 import io.grpc.ConnectivityStateInfo;
 import io.grpc.EquivalentAddressGroup;
-import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.CreateSubchannelArgs;
 import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.Subchannel;
@@ -36,20 +35,26 @@ import java.util.concurrent.TimeUnit;
  * A {@link SubchannelPool} that keeps returned {@link Subchannel}s for a given time before it's
  * shut down by the pool.
  */
+// TODO(creamsoup) address to subchannel is not 1:1 mapping because subchannel can update its
+//  address. Use Multimap and ForwardingSubchannel (override updateAddresses) to maintain most up to
+//  dated subchannel view.
 final class CachedSubchannelPool implements SubchannelPool {
   private final HashMap<EquivalentAddressGroup, CacheEntry> cache =
       new HashMap<>();
 
-  private Helper helper;
-  private LoadBalancer lb;
+  private final Helper helper;
+  private PooledSubchannelStateListener listener;
 
   @VisibleForTesting
   static final long SHUTDOWN_TIMEOUT_MS = 10000;
 
-  @Override
-  public void init(Helper helper, LoadBalancer lb) {
+  public CachedSubchannelPool(Helper helper) {
     this.helper = checkNotNull(helper, "helper");
-    this.lb = checkNotNull(lb, "lb");
+  }
+
+  @Override
+  public void registerListener(PooledSubchannelStateListener pooledSubchannelStateListener) {
+    this.listener = checkNotNull(pooledSubchannelStateListener, "pooledSubchannelStateListener");
   }
 
   @Override
@@ -67,7 +72,7 @@ final class CachedSubchannelPool implements SubchannelPool {
       subchannel.start(new SubchannelStateListener() {
         @Override
         public void onSubchannelState(ConnectivityStateInfo newState) {
-          handleSubchannelState(subchannel, newState);
+          listener.onSubchannelState(subchannel, newState);
         }
       });
     } else {
@@ -77,9 +82,8 @@ final class CachedSubchannelPool implements SubchannelPool {
       // in the cache.
       helper.getSynchronizationContext().execute(new Runnable() {
           @Override
-          @SuppressWarnings("deprecation")
           public void run() {
-            lb.handleSubchannelState(subchannel, entry.state);
+            listener.onSubchannelState(subchannel, entry.state);
           }
         });
     }

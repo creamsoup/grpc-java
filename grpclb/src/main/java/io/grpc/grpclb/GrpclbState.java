@@ -48,6 +48,7 @@ import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.SynchronizationContext;
 import io.grpc.SynchronizationContext.ScheduledHandle;
+import io.grpc.grpclb.SubchannelPool.PooledSubchannelStateListener;
 import io.grpc.internal.BackoffPolicy;
 import io.grpc.internal.TimeProvider;
 import io.grpc.lb.v1.ClientStats;
@@ -168,9 +169,17 @@ final class GrpclbState {
     this.config = checkNotNull(config, "config");
     this.helper = checkNotNull(helper, "helper");
     this.syncContext = checkNotNull(helper.getSynchronizationContext(), "syncContext");
-    this.subchannelPool =
-        config.getMode() == Mode.ROUND_ROBIN
-            ? checkNotNull(subchannelPool, "subchannelPool") : null;
+    if (config.getMode() == Mode.ROUND_ROBIN) {
+      this.subchannelPool = checkNotNull(subchannelPool, "subchannelPool");
+      subchannelPool.registerListener(new PooledSubchannelStateListener() {
+        @Override
+        public void onSubchannelState(Subchannel subchannel, ConnectivityStateInfo newState) {
+          handleSubchannelState(subchannel, newState);
+        }
+      });
+    } else {
+      this.subchannelPool = null;
+    }
     this.time = checkNotNull(time, "time provider");
     this.stopwatch = checkNotNull(stopwatch, "stopwatch");
     this.timerService = checkNotNull(helper.getScheduledExecutorService(), "timerService");
@@ -392,7 +401,6 @@ final class GrpclbState {
   /**
    * Populate the round-robin lists with the given values.
    */
-  @SuppressWarnings("deprecation")
   private void useRoundRobinLists(
       List<DropEntry> newDropList, List<BackendAddressGroup> newBackendAddrList,
       @Nullable GrpclbClientLoadRecorder loadRecorder) {
@@ -475,8 +483,7 @@ final class GrpclbState {
               handleSubchannelState(subchannel, newState);
             }
           });
-
-       } else {
+        } else {
           subchannel = subchannels.values().iterator().next();
           subchannel.updateAddresses(eagList);
         }
