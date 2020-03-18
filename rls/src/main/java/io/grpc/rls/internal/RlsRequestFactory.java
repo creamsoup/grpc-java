@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.grpc.rls;
+package io.grpc.rls.internal;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -24,11 +24,11 @@ import com.google.common.collect.Table;
 import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
-import io.grpc.rls.RlsProtoData.GrpcKeyBuilder;
-import io.grpc.rls.RlsProtoData.GrpcKeyBuilder.Name;
-import io.grpc.rls.RlsProtoData.NameMatcher;
-import io.grpc.rls.RlsProtoData.RouteLookupConfig;
-import io.grpc.rls.RlsProtoData.RouteLookupRequest;
+import io.grpc.rls.internal.RlsProtoData.GrpcKeyBuilder;
+import io.grpc.rls.internal.RlsProtoData.GrpcKeyBuilder.Name;
+import io.grpc.rls.internal.RlsProtoData.NameMatcher;
+import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
+import io.grpc.rls.internal.RlsProtoData.RouteLookupRequest;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;

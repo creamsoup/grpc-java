@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.grpc.rls;
+package io.grpc.rls.internal;
 
 import javax.annotation.CheckReturnValue;
 import javax.annotation.Nullable;

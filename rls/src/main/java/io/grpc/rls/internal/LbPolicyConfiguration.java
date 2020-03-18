@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.grpc.rls;
+package io.grpc.rls.internal;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
@@ -29,7 +29,7 @@ import io.grpc.LoadBalancerProvider;
 import io.grpc.LoadBalancerRegistry;
 import io.grpc.internal.AtomicBackoff;
 import io.grpc.internal.ObjectPool;
-import io.grpc.rls.RlsProtoData.RouteLookupConfig;
+import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -45,21 +45,21 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * LbPolicyConfiguration is a configuration for RLS load balancer.
  */
-final class LbPolicyConfiguration {
+public final class LbPolicyConfiguration {
 
   private final RouteLookupConfig routeLookupConfig;
   private final ChildLoadBalancingPolicy policy;
 
-  LbPolicyConfiguration(RouteLookupConfig routeLookupConfig, ChildLoadBalancingPolicy policy) {
+  public LbPolicyConfiguration(RouteLookupConfig routeLookupConfig, ChildLoadBalancingPolicy policy) {
     this.routeLookupConfig = checkNotNull(routeLookupConfig, "routeLookupConfig");
     this.policy = checkNotNull(policy, "policy");
   }
 
-  RouteLookupConfig getRouteLookupConfig() {
+  public RouteLookupConfig getRouteLookupConfig() {
     return routeLookupConfig;
   }
 
-  ChildLoadBalancingPolicy getLoadBalancingPolicy() {
+  public ChildLoadBalancingPolicy getLoadBalancingPolicy() {
     return policy;
   }
 
@@ -90,7 +90,7 @@ final class LbPolicyConfiguration {
   }
 
   /** ChildLoadBalancingPolicy is an elected child policy to delegate requests. */
-  static final class ChildLoadBalancingPolicy {
+  public static final class ChildLoadBalancingPolicy {
 
     private final Map<String, Object> effectiveRawChildPolicy;
     private final LoadBalancerProvider effectiveLbProvider;
@@ -100,7 +100,7 @@ final class LbPolicyConfiguration {
     private final ConcurrentMap<String /* path */, PendingRlsRequest> pendingRequests
         = new ConcurrentHashMap<>();
 
-    ChildLoadBalancingPolicy(
+    public ChildLoadBalancingPolicy(
         String childPolicyConfigTargetFieldName,
         List<Map<String, ?>> childPolicies) {
       checkState(
@@ -132,12 +132,12 @@ final class LbPolicyConfiguration {
       this.effectiveLbProvider = effectiveLbProvider;
     }
 
-    String getChildPolicyConfigTargetFieldName() {
+    public String getChildPolicyConfigTargetFieldName() {
       return childPolicyConfigTargetFieldName;
     }
 
     @SuppressWarnings("unchecked")
-    Map<String, ?> getEffectiveChildPolicy(String target) {
+    public Map<String, ?> getEffectiveChildPolicy(String target) {
       checkState(
           effectiveRawChildPolicy.size() == 1, "child policy must have only 1 policy specified");
       Map.Entry<String, Object> childPolicyEntry =
@@ -148,7 +148,7 @@ final class LbPolicyConfiguration {
       return childPolicy;
     }
 
-    LoadBalancerProvider getEffectiveLbProvider() {
+    public LoadBalancerProvider getEffectiveLbProvider() {
       return effectiveLbProvider;
     }
 

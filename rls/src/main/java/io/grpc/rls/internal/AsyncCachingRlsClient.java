@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.grpc.rls;
+package io.grpc.rls.internal;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
@@ -41,15 +41,13 @@ import io.grpc.internal.ExponentialBackoffPolicy;
 import io.grpc.internal.TimeProvider;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc.RouteLookupServiceStub;
-import io.grpc.rls.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider;
-import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
-import io.grpc.rls.LruCache.EvictionListener;
-import io.grpc.rls.LruCache.EvictionType;
-import io.grpc.rls.RlsLoadBalancer.ChildLbResolvedAddressFactory;
-import io.grpc.rls.RlsProtoConverters.RouteLookupResponseConverter;
-import io.grpc.rls.RlsProtoData.RouteLookupRequest;
-import io.grpc.rls.RlsProtoData.RouteLookupResponse;
-import io.grpc.rls.internal.Throttler;
+import io.grpc.rls.internal.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider;
+import io.grpc.rls.internal.LbPolicyConfiguration.ChildPolicyWrapper;
+import io.grpc.rls.internal.LruCache.EvictionListener;
+import io.grpc.rls.internal.LruCache.EvictionType;
+import io.grpc.rls.internal.RlsProtoConverters.RouteLookupResponseConverter;
+import io.grpc.rls.internal.RlsProtoData.RouteLookupRequest;
+import io.grpc.rls.internal.RlsProtoData.RouteLookupResponse;
 import io.grpc.rls.internal.Throttler.ThrottledException;
 import io.grpc.stub.StreamObserver;
 import io.grpc.util.ForwardingLoadBalancerHelper;
@@ -75,7 +73,7 @@ import javax.annotation.concurrent.ThreadSafe;
  * between staled and max), AsyncRequestCache will asynchronously refresh the entry.
  */
 @ThreadSafe
-final class AsyncCachingRlsClient {
+public final class AsyncCachingRlsClient {
 
   private static final Converter<RouteLookupRequest, io.grpc.lookup.v1.RouteLookupRequest>
       reqConverter = new RlsProtoConverters.RouteLookupRequestConverter().reverse();
@@ -133,7 +131,7 @@ final class AsyncCachingRlsClient {
         checkNotNull(builder.childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
     this.backoffProvider = builder.backoffProvider;
     this.rlsPicker = new RlsPicker(lbPolicyConfig, this, helper, childLbResolvedAddressFactory);
-    this.childLbHelperProvider = new ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider(helper, rlsPicker);
+    this.childLbHelperProvider = new ChildLoadBalancerHelperProvider(helper, rlsPicker);
   }
 
   @CheckReturnValue

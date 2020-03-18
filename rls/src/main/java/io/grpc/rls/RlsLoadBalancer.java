@@ -18,16 +18,15 @@ package io.grpc.rls;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
-import io.grpc.Attributes;
 import io.grpc.ChannelLogger.ChannelLogLevel;
-import io.grpc.EquivalentAddressGroup;
 import io.grpc.LoadBalancer;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
-import io.grpc.rls.RlsProtoData.RouteLookupConfig;
 import io.grpc.rls.internal.AdaptiveThrottler;
-import java.util.Collections;
-import java.util.List;
+import io.grpc.rls.internal.AsyncCachingRlsClient;
+import io.grpc.rls.internal.ChildLbResolvedAddressFactory;
+import io.grpc.rls.internal.LbPolicyConfiguration;
+import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
 
 /**
  * Implementation of {@link LoadBalancer} backed by route lookup service.
@@ -64,7 +63,8 @@ final class RlsLoadBalancer extends LoadBalancer {
         rlsServerChannel = helper.createResolvingOobChannel(rlsConfig.getLookupService());
         AdaptiveThrottler throttler = AdaptiveThrottler.builder().build();
         ChildLbResolvedAddressFactory childLbResolvedAddressFactory =
-            new ChildLbResolvedAddressFactory(resolvedAddresses);
+            new ChildLbResolvedAddressFactory(
+                resolvedAddresses.getAddresses(), resolvedAddresses.getAttributes());
         routeLookupClient =
             AsyncCachingRlsClient.newBuilder()
                 .setChildLbResolvedAddressesFactory(childLbResolvedAddressFactory)
@@ -104,27 +104,6 @@ final class RlsLoadBalancer extends LoadBalancer {
     }
     if (routeLookupClient != null) {
       routeLookupClient.close();
-    }
-  }
-
-  /** Factory to created {@link io.grpc.LoadBalancer.ResolvedAddresses} passed to child lb. */
-  static final class ChildLbResolvedAddressFactory {
-
-    private final List<EquivalentAddressGroup> addresses;
-    private final Attributes attributes;
-
-    ChildLbResolvedAddressFactory(ResolvedAddresses resolvedAddresses) {
-      checkNotNull(resolvedAddresses, "resolvedAddresses");
-      this.addresses = Collections.unmodifiableList(resolvedAddresses.getAddresses());
-      this.attributes = resolvedAddresses.getAttributes();
-    }
-
-    public ResolvedAddresses create(Object childLbConfig) {
-      return ResolvedAddresses.newBuilder()
-          .setAddresses(addresses)
-          .setAttributes(attributes)
-          .setLoadBalancingPolicyConfig(childLbConfig)
-          .build();
     }
   }
 }

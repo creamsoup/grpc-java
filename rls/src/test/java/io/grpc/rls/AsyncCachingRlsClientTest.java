@@ -27,9 +27,9 @@
 // import io.grpc.inprocess.InProcessChannelBuilder;
 // import io.grpc.inprocess.InProcessServerBuilder;
 // import io.grpc.rls.AdaptiveThrottler.Ticker;
-// import io.grpc.rls.AsyncCachingRlsClient.CacheEntry;
-// import io.grpc.rls.AsyncCachingRlsClient.CachedResponse;
-// import io.grpc.rls.LruCache.EvictionListener;
+// import io.grpc.rls.internal.AsyncCachingRlsClient.CacheEntry;
+// import io.grpc.rls.internal.AsyncCachingRlsClient.CachedResponse;
+// import io.grpc.rls.internal.LruCache.EvictionListener;
 // import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 // import io.grpc.rls.RlsProtoData.RouteLookupResponse;
 // import io.grpc.rls.TestRlsServer.DelayedValueOrError;

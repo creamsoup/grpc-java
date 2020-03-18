@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.grpc.rls;
+package io.grpc.rls.internal;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -31,13 +31,12 @@ import io.grpc.LoadBalancerProvider;
 import io.grpc.Metadata;
 import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
-import io.grpc.rls.AsyncCachingRlsClient.CachedResponse;
-import io.grpc.rls.AsyncCachingRlsClient.ChildPolicyReportingHelper;
-import io.grpc.rls.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider;
-import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
-import io.grpc.rls.RlsLoadBalancer.ChildLbResolvedAddressFactory;
-import io.grpc.rls.RlsProtoData.RequestProcessingStrategy;
-import io.grpc.rls.RlsProtoData.RouteLookupRequest;
+import io.grpc.rls.internal.AsyncCachingRlsClient.CachedResponse;
+import io.grpc.rls.internal.AsyncCachingRlsClient.ChildPolicyReportingHelper;
+import io.grpc.rls.internal.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider;
+import io.grpc.rls.internal.LbPolicyConfiguration.ChildPolicyWrapper;
+import io.grpc.rls.internal.RlsProtoData.RequestProcessingStrategy;
+import io.grpc.rls.internal.RlsProtoData.RouteLookupRequest;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
