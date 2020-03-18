@@ -38,10 +38,9 @@ import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
 import io.grpc.internal.BackoffPolicy;
 import io.grpc.internal.ExponentialBackoffPolicy;
+import io.grpc.internal.TimeProvider;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc.RouteLookupServiceStub;
-import io.grpc.rls.AdaptiveThrottler.SystemTicker;
-import io.grpc.rls.AdaptiveThrottler.Ticker;
 import io.grpc.rls.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider;
 import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.LruCache.EvictionListener;
@@ -50,7 +49,8 @@ import io.grpc.rls.RlsLoadBalancer.ChildLbResolvedAddressFactory;
 import io.grpc.rls.RlsProtoConverters.RouteLookupResponseConverter;
 import io.grpc.rls.RlsProtoData.RouteLookupRequest;
 import io.grpc.rls.RlsProtoData.RouteLookupResponse;
-import io.grpc.rls.Throttler.ThrottledException;
+import io.grpc.rls.internal.Throttler;
+import io.grpc.rls.internal.Throttler.ThrottledException;
 import io.grpc.stub.StreamObserver;
 import io.grpc.util.ForwardingLoadBalancerHelper;
 import java.util.HashMap;
@@ -90,7 +90,7 @@ final class AsyncCachingRlsClient {
   // any RPC on the fly will cached in this map
   private final Map<RouteLookupRequest, PendingCacheEntry> pendingCallCache = new HashMap<>();
   private final Executor syncronizedContext;
-  private final Ticker ticker;
+  private final TimeProvider timeProvider;
   private final Throttler throttler;
   private final BackoffPolicy.Provider backoffProvider;
 
@@ -117,14 +117,15 @@ final class AsyncCachingRlsClient {
         "maxAgeMillis should be greater than equals to staleAgeMillis");
     checkState(builder.callTimeoutMillis > 0, "callTimeoutMillis should be positive");
     this.maxAgeMillis = builder.maxAgeMillis;
+    // TODO(creamsoup) change to nanos
     this.staleAgeMillis = builder.staleAgeMillis;
     this.callTimeoutMillis = builder.callTimeoutMillis;
-    this.ticker = checkNotNull(builder.ticker, "ticker");
+    this.timeProvider = checkNotNull(builder.timeProvider, "ticker");
     this.maxSizeBytes = (int) builder.maxCacheSizeBytes;
     this.throttler = checkNotNull(builder.throttler, "throttler");
     this.linkedHashLruCache =
         new RlsAsyncLruCache(
-            maxSizeBytes, builder.evictionListener, scheduledExecutorService, ticker);
+            maxSizeBytes, builder.evictionListener, scheduledExecutorService, timeProvider);
     this.lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
     this.channel = checkNotNull(builder.channel, "subchannel");
     this.stub = RouteLookupServiceGrpc.newStub(channel);
@@ -189,7 +190,7 @@ final class AsyncCachingRlsClient {
         return handleNewRequest(request);
       }
 
-      long now = ticker.nowInMillis();
+      long now = timeProvider.currentTimeNanos();
       if (cacheEntry.hasData()) {
         // cache hit, initiate async-refresh if entry is staled
         DataCacheEntry dataEntry = ((DataCacheEntry) cacheEntry);
@@ -402,13 +403,13 @@ final class AsyncCachingRlsClient {
     abstract int getSizeBytes();
 
     boolean isExpired() {
-      return isExpired(ticker.nowInMillis());
+      return isExpired(timeProvider.currentTimeNanos());
     }
 
     abstract boolean isExpired(long now);
 
     boolean isStaled() {
-      return isStaled(ticker.nowInMillis());
+      return isStaled(timeProvider.currentTimeNanos());
     }
 
     abstract boolean isStaled(long now);
@@ -431,9 +432,9 @@ final class AsyncCachingRlsClient {
       headerData = response.getHeaderData();
 
       childPolicyWrapper = ChildPolicyWrapper.createOrGet(response.getTarget());
-      long now = ticker.nowInMillis();
-      expireTime = now + maxAgeMillis;
-      staleTime = now + staleAgeMillis;
+      long now = timeProvider.currentTimeNanos();
+      expireTime = now + TimeUnit.MILLISECONDS.toNanos(maxAgeMillis);
+      staleTime = now + TimeUnit.MILLISECONDS.toNanos(staleAgeMillis);
       linkedHashLruCache.updateEntrySize(request);
 
       if (childPolicyWrapper.getPicker() == null) {
@@ -515,7 +516,7 @@ final class AsyncCachingRlsClient {
 
     @Override
     boolean isExpired() {
-      return isExpired(ticker.nowInMillis());
+      return isExpired(timeProvider.currentTimeNanos());
     }
 
     @Override
@@ -558,8 +559,8 @@ final class AsyncCachingRlsClient {
       this.backoffPolicy = checkNotNull(backoffPolicy, "backoffPolicy");
       //TODO removeme
       status.asException().printStackTrace(System.out);
-      long delay = backoffPolicy.nextBackoffNanos();
-      this.expireMills = ticker.nowInMillis() + TimeUnit.NANOSECONDS.toMillis(delay);
+      long delayNanos = backoffPolicy.nextBackoffNanos();
+      this.expireMills = timeProvider.currentTimeNanos() + delayNanos;
       this.scheduledFuture = scheduledExecutorService.schedule(
           new Runnable() {
             @Override
@@ -567,7 +568,7 @@ final class AsyncCachingRlsClient {
               transitionToPending();
             }
           },
-          delay,
+          delayNanos,
           TimeUnit.NANOSECONDS);
     }
 
@@ -697,7 +698,7 @@ final class AsyncCachingRlsClient {
     private long maxAgeMillis = TimeUnit.MINUTES.toMillis(5);
     private long staleAgeMillis = TimeUnit.MINUTES.toMillis(3);
     private long callTimeoutMillis = TimeUnit.SECONDS.toMillis(5);
-    private Ticker ticker = new SystemTicker();
+    private TimeProvider timeProvider = TimeProvider.SYSTEM_TIME_PROVIDER;
     private Throttler throttler = new HappyThrottler();
     private EvictionListener<RouteLookupRequest, CacheEntry> evictionListener = null;
     private ManagedChannel channel;
@@ -724,8 +725,8 @@ final class AsyncCachingRlsClient {
       return this;
     }
 
-    public Builder setTicker(Ticker ticker) {
-      this.ticker = checkNotNull(ticker, "ticker");
+    public Builder setTimeProvider(TimeProvider timeProvider) {
+      this.timeProvider = checkNotNull(timeProvider, "timeProvider");
       return this;
     }
 
@@ -821,18 +822,18 @@ final class AsyncCachingRlsClient {
 
     RlsAsyncLruCache(long maxEstimatedSizeBytes,
         @Nullable EvictionListener<RouteLookupRequest, CacheEntry> evictionListener,
-        ScheduledExecutorService ses, Ticker ticker) {
+        ScheduledExecutorService ses, TimeProvider timeProvider) {
       super(
           maxEstimatedSizeBytes,
           new AutoCleaningEvictionListener(evictionListener),
           1,
           TimeUnit.MINUTES,
           ses,
-          ticker);
+          timeProvider);
     }
 
     @Override
-    protected boolean isExpired(RouteLookupRequest key, CacheEntry value, long nowInMillis) {
+    protected boolean isExpired(RouteLookupRequest key, CacheEntry value, long nowNanos) {
       return value.isExpired();
     }
 

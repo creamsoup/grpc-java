@@ -25,6 +25,7 @@ import io.grpc.LoadBalancer;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.rls.RlsProtoData.RouteLookupConfig;
+import io.grpc.rls.internal.AdaptiveThrottler;
 import java.util.Collections;
 import java.util.List;
 

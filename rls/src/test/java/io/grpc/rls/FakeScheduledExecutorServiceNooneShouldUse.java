@@ -6,7 +6,6 @@ import static com.google.common.base.Preconditions.checkState;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import io.grpc.rls.AdaptiveThrottler.Ticker;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;

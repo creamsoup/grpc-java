@@ -18,7 +18,6 @@ package io.grpc.rls;
 
 import static com.google.common.truth.Truth.assertThat;
 
-import io.grpc.rls.AdaptiveThrottler.Ticker;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.Test;
 import org.junit.runner.RunWith;

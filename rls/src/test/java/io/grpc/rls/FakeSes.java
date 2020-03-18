@@ -3,7 +3,6 @@ package io.grpc.rls;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
-import io.grpc.rls.AdaptiveThrottler.Ticker;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;

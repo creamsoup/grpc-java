@@ -27,7 +27,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 import com.google.common.base.MoreObjects;
-import io.grpc.rls.AdaptiveThrottler.Ticker;
 import io.grpc.rls.LruCache.EvictionListener;
 import io.grpc.rls.LruCache.EvictionType;
 import java.util.Objects;
@@ -69,8 +68,8 @@ public class LinkedHashLruCacheTest {
         fses,
         ticker) {
       @Override
-      protected boolean isExpired(Integer key, Entry value, long nowInMillis) {
-        return value.getExpireTime() <= nowInMillis;
+      protected boolean isExpired(Integer key, Entry value, long nowNanos) {
+        return value.getExpireTime() <= nowNanos;
       }
     };
   }
