@@ -33,6 +33,7 @@ import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
 import io.grpc.rls.AsyncCachingRlsClient.CachedResponse;
 import io.grpc.rls.AsyncCachingRlsClient.ChildPolicyReportingHelper;
+import io.grpc.rls.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider;
 import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.RlsLoadBalancer.ChildLbResolvedAddressFactory;
 import io.grpc.rls.RlsProtoData.RequestProcessingStrategy;
@@ -49,6 +50,7 @@ final class RlsPicker extends SubchannelPicker {
       Metadata.Key.of("X-Google-RLS-Data", Metadata.ASCII_STRING_MARSHALLER);
 
   private final ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
+  private final ChildLoadBalancerHelperProvider childLbHelperProvider;
   private LbPolicyConfiguration lbPolicyConfiguration;
   @Nullable
   private AsyncCachingRlsClient rlsClient; // cache is embedded
@@ -72,6 +74,7 @@ final class RlsPicker extends SubchannelPicker {
     this.strategy = lbPolicyConfiguration.getRouteLookupConfig().getRequestProcessingStrategy();
     this.childLbResolvedAddressFactory = childLbResolvedAddressFactory;
     helper.updateBalancingState(ConnectivityState.CONNECTING, this);
+    this.childLbHelperProvider = new ChildLoadBalancerHelperProvider(helper, this);
   }
 
   RlsSubchannelStateManager getSubchannelStateManager() {
@@ -195,9 +198,7 @@ final class RlsPicker extends SubchannelPicker {
 
     final LoadBalancerProvider lbProvider =
         lbPolicyConfiguration.getLoadBalancingPolicy().getEffectiveLbProvider();
-    ChildLoadBalancerHelper delegate = new ChildLoadBalancerHelper(helper);
-    delegate.setRlsPicker(this);
-    delegate.setTarget(defaultTarget);
+    ChildLoadBalancerHelper delegate = childLbHelperProvider.forTarget(defaultTarget);
     ChildPolicyReportingHelper childPolicyReportingHelper =
         new ChildPolicyReportingHelper(delegate, fallbackChildPolicyWrapper);
     final LoadBalancer lb =

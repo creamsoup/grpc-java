@@ -207,6 +207,7 @@ final class LbPolicyConfiguration {
     private Subchannel subchannel;
     private ConnectivityState connectivityState = ConnectivityState.IDLE;
     private SubchannelPicker picker;
+    private ChildLoadBalancerHelper helper;
 
     private ChildPolicyWrapper(String target) {
       this.target = target;
@@ -262,6 +263,10 @@ final class LbPolicyConfiguration {
 
     SubchannelPicker getPicker() {
       return picker;
+    }
+
+    public ChildLoadBalancerHelper getHelper() {
+      return helper;
     }
 
     void setConnectivityState(ConnectivityState connectivityState) {

@@ -42,6 +42,7 @@ import io.grpc.lookup.v1.RouteLookupServiceGrpc;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc.RouteLookupServiceStub;
 import io.grpc.rls.AdaptiveThrottler.SystemTicker;
 import io.grpc.rls.AdaptiveThrottler.Ticker;
+import io.grpc.rls.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider;
 import io.grpc.rls.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.LruCache.EvictionListener;
 import io.grpc.rls.LruCache.EvictionType;
@@ -88,7 +89,7 @@ final class AsyncCachingRlsClient {
   private final LinkedHashLruCache<RouteLookupRequest, CacheEntry> linkedHashLruCache;
   // any RPC on the fly will cached in this map
   private final Map<RouteLookupRequest, PendingCacheEntry> pendingCallCache = new HashMap<>();
-  private final Executor executor;
+  private final Executor syncronizedContext;
   private final Ticker ticker;
   private final Throttler throttler;
   private final BackoffPolicy.Provider backoffProvider;
@@ -97,16 +98,18 @@ final class AsyncCachingRlsClient {
   private final long staleAgeMillis;
   private final long callTimeoutMillis;
   private final long maxSizeBytes;
-  private final ChildLoadBalancerHelper helper;
+  private final Helper helper;
   private final LbPolicyConfiguration lbPolicyConfig;
   private final ManagedChannel channel;
   private final ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
   private final RouteLookupServiceStub stub;
+  private final RlsPicker rlsPicker;
+  private final ChildLoadBalancerHelperProvider childLbHelperProvider;
 
   AsyncCachingRlsClient(final Builder builder) {
-    this.scheduledExecutorService =
-        checkNotNull(builder.scheduledExecutorService, "scheduledExecutorService");
-    this.executor = checkNotNull(builder.executor, "executor");
+    this.helper = checkNotNull(builder.helper, "helper");
+    this.scheduledExecutorService = helper.getScheduledExecutorService();
+    this.syncronizedContext = helper.getSynchronizationContext();
     checkState(builder.maxAgeMillis > 0, "maxAgeMillis should be positive");
     checkState(builder.staleAgeMillis > 0, "staleAgeMillis should be positive");
     checkState(
@@ -122,13 +125,14 @@ final class AsyncCachingRlsClient {
     this.linkedHashLruCache =
         new RlsAsyncLruCache(
             maxSizeBytes, builder.evictionListener, scheduledExecutorService, ticker);
-    this.helper = checkNotNull(builder.helper, "helper");
     this.lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
     this.channel = checkNotNull(builder.channel, "subchannel");
     this.stub = RouteLookupServiceGrpc.newStub(channel);
     this.childLbResolvedAddressFactory =
         checkNotNull(builder.childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
     this.backoffProvider = builder.backoffProvider;
+    this.rlsPicker = new RlsPicker(lbPolicyConfig, this, helper, childLbResolvedAddressFactory);
+    this.childLbHelperProvider = new ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider(helper, rlsPicker);
   }
 
   @CheckReturnValue
@@ -343,7 +347,7 @@ final class AsyncCachingRlsClient {
         public void run() {
           handleDoneFuture();
         }
-      }, executor);
+      }, syncronizedContext);
     }
 
     private void handleDoneFuture() {
@@ -440,7 +444,7 @@ final class AsyncCachingRlsClient {
             .getChildPolicy()
             .getEffectiveLbProvider();
         ChildPolicyReportingHelper childPolicyReportingHelper =
-            new ChildPolicyReportingHelper(helper, childPolicyWrapper);
+            new ChildPolicyReportingHelper(childLbHelperProvider.forTarget(response.getTarget()), childPolicyWrapper);
         LoadBalancer lb =
             lbProvider.newLoadBalancer(childPolicyReportingHelper);
         childPolicyWrapper.setLoadBalancer(lb);
@@ -454,10 +458,10 @@ final class AsyncCachingRlsClient {
         lb.requestConnection();
       } else {
         System.out.println("reusing childPolicyWrapper for " + response);
-        //TODO this is horrible fixme
-        helper.setTarget(childPolicyWrapper.getTarget());
-        helper.updateBalancingState(
-            childPolicyWrapper.getConnectivityState(), childPolicyWrapper.getPicker());
+        childPolicyWrapper
+            .getHelper()
+            .updateBalancingState(
+                childPolicyWrapper.getConnectivityState(), childPolicyWrapper.getPicker());
       }
     }
 
@@ -687,10 +691,8 @@ final class AsyncCachingRlsClient {
   /** A Builder for {@link AsyncCachingRlsClient}. */
   public static final class Builder {
 
-    private ChildLoadBalancerHelper helper;
+    private Helper helper;
     private LbPolicyConfiguration lbPolicyConfig;
-    private ScheduledExecutorService scheduledExecutorService;
-    private Executor executor;
     private long maxCacheSizeBytes = 100 * 1024 * 1024; // 100 MB
     private long maxAgeMillis = TimeUnit.MINUTES.toMillis(5);
     private long staleAgeMillis = TimeUnit.MINUTES.toMillis(3);
@@ -701,18 +703,6 @@ final class AsyncCachingRlsClient {
     private ManagedChannel channel;
     private ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
     private BackoffPolicy.Provider backoffProvider = new ExponentialBackoffPolicy.Provider();
-
-    public Builder setScheduledExecutorService(
-        ScheduledExecutorService scheduledExecutorService) {
-      this.scheduledExecutorService =
-          checkNotNull(scheduledExecutorService, "scheduledExecutorService");
-      return this;
-    }
-
-    public Builder setExecutor(Executor executor) {
-      this.executor = checkNotNull(executor, "executor");
-      return this;
-    }
 
     public Builder setMaxCacheSizeBytes(long maxCacheSizeBytes) {
       this.maxCacheSizeBytes = maxCacheSizeBytes;
@@ -750,7 +740,7 @@ final class AsyncCachingRlsClient {
       return this;
     }
 
-    public Builder setHelper(ChildLoadBalancerHelper helper) {
+    public Builder setHelper(Helper helper) {
       this.helper = checkNotNull(helper, "helper");
       return this;
     }
@@ -792,7 +782,6 @@ final class AsyncCachingRlsClient {
         ChildLoadBalancerHelper delegate,
         ChildPolicyWrapper childPolicyWrapper) {
       this.delegate = checkNotNull(delegate, "delegate");
-      delegate.setTarget(childPolicyWrapper.getTarget());
       this.childPolicyWrapper = checkNotNull(childPolicyWrapper, "childPolicyWrapper");
     }
 

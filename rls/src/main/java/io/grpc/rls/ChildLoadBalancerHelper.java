@@ -28,24 +28,18 @@ import javax.annotation.Nonnull;
 final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
 
   private final Helper rlsHelper;
-  private String target;
-  private RlsPicker rlsPicker;
+  private final String target;
+  private final RlsPicker rlsPicker;
 
-  public ChildLoadBalancerHelper(Helper rlsHelper) {
+  private ChildLoadBalancerHelper(String target, Helper rlsHelper, RlsPicker rlsPicker) {
+    this.target = checkNotNull(target, "target");
     this.rlsHelper = checkNotNull(rlsHelper, "rlsHelper");
+    this.rlsPicker = checkNotNull(rlsPicker, "rlsPicker");
   }
 
   @Override
   protected Helper delegate() {
     return rlsHelper;
-  }
-
-  public void setRlsPicker(RlsPicker rlsPicker) {
-    this.rlsPicker = checkNotNull(rlsPicker, "rlsPicker");
-  }
-
-  public void setTarget(String target) {
-    this.target = checkNotNull(target, "target");
   }
 
   @Override
@@ -60,5 +54,19 @@ final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
   private ConnectivityState updateLbState(String target, ConnectivityState state) {
     rlsPicker.getSubchannelStateManager().registerNewState(target, state);
     return rlsPicker.getSubchannelStateManager().getAggregatedState();
+  }
+
+  public static final class ChildLoadBalancerHelperProvider {
+    private final Helper helper;
+    private final RlsPicker rlsPicker;
+
+    public ChildLoadBalancerHelperProvider(Helper helper, RlsPicker rlsPicker) {
+      this.helper = helper;
+      this.rlsPicker = rlsPicker;
+    }
+
+    public ChildLoadBalancerHelper forTarget(String target) {
+      return new ChildLoadBalancerHelper(target, helper, rlsPicker);
+    }
   }
 }

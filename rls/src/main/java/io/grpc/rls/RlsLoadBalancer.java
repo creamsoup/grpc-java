@@ -62,28 +62,20 @@ final class RlsLoadBalancer extends LoadBalancer {
 
         rlsServerChannel = helper.createResolvingOobChannel(rlsConfig.getLookupService());
         AdaptiveThrottler throttler = AdaptiveThrottler.builder().build();
-        ChildLoadBalancerHelper childBalancerHelper = new ChildLoadBalancerHelper(helper);
         ChildLbResolvedAddressFactory childLbResolvedAddressFactory =
             new ChildLbResolvedAddressFactory(resolvedAddresses);
-        AsyncCachingRlsClient client =
+        routeLookupClient =
             AsyncCachingRlsClient.newBuilder()
                 .setChildLbResolvedAddressesFactory(childLbResolvedAddressFactory)
                 .setChannel(rlsServerChannel)
-                .setScheduledExecutorService(helper.getScheduledExecutorService())
-                .setExecutor(helper.getSynchronizationContext())
                 .setMaxAgeMillis(rlsConfig.getMaxAgeInMillis())
                 .setStaleAgeMillis(rlsConfig.getStaleAgeInMillis())
                 .setMaxCacheSizeBytes(rlsConfig.getCacheSizeBytes())
                 .setCallTimeoutMillis(rlsConfig.getLookupServiceTimeoutInMillis())
                 .setThrottler(throttler)
-                .setHelper(childBalancerHelper)
+                .setHelper(helper)
                 .setLbPolicyConfig(lbPolicyConfiguration)
                 .build();
-        routeLookupClient = client;
-        // rls picker will report to helper
-        RlsPicker rlsPicker =
-            new RlsPicker(lbPolicyConfiguration, client, helper, childLbResolvedAddressFactory);
-        childBalancerHelper.setRlsPicker(rlsPicker);
       }
       // TODO(creamsoup) update configs if necessary (maybe easier to create new cache?)
       //  for v1 implementation this is not required.
