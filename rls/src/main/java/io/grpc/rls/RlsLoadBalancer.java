@@ -60,15 +60,12 @@ final class RlsLoadBalancer extends LoadBalancer {
           rlsServerChannel.shutdown();
         }
 
-        // TODO how to tell 80 or 443 or port??
-        System.out.println("helper's authority: " + helper.getAuthority());
-        System.out.println("rlsConfig lookupService: " + rlsConfig.getLookupService());
         rlsServerChannel = helper.createResolvingOobChannel(rlsConfig.getLookupService());
         AdaptiveThrottler throttler = AdaptiveThrottler.builder().build();
         ChildLoadBalancerHelper childBalancerHelper = new ChildLoadBalancerHelper(helper);
         ChildLbResolvedAddressFactory childLbResolvedAddressFactory =
             new ChildLbResolvedAddressFactory(resolvedAddresses);
-        final AsyncCachingRlsClient client =
+        AsyncCachingRlsClient client =
             AsyncCachingRlsClient.newBuilder()
                 .setChildLbResolvedAddressesFactory(childLbResolvedAddressFactory)
                 .setChannel(rlsServerChannel)
@@ -84,8 +81,8 @@ final class RlsLoadBalancer extends LoadBalancer {
                 .build();
         routeLookupClient = client;
         // rls picker will report to helper
-        RlsPicker rlsPicker = new RlsPicker(lbPolicyConfiguration, client, helper,
-            childLbResolvedAddressFactory);
+        RlsPicker rlsPicker =
+            new RlsPicker(lbPolicyConfiguration, client, helper, childLbResolvedAddressFactory);
         childBalancerHelper.setRlsPicker(rlsPicker);
       }
       // TODO(creamsoup) update configs if necessary (maybe easier to create new cache?)

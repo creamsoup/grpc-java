@@ -207,7 +207,6 @@ final class LbPolicyConfiguration {
     private Subchannel subchannel;
     private ConnectivityState connectivityState = ConnectivityState.IDLE;
     private SubchannelPicker picker;
-    private boolean closed;
 
     private ChildPolicyWrapper(String target) {
       this.target = target;
@@ -277,8 +276,6 @@ final class LbPolicyConfiguration {
 
     @Override
     public void close() {
-      // this might be error prone, if closed is called out side of release.
-      closed = true;
       childPolicy = null;
       connectivityState = null;
     }
@@ -292,8 +289,7 @@ final class LbPolicyConfiguration {
         return false;
       }
       ChildPolicyWrapper wrapper = (ChildPolicyWrapper) o;
-      return closed == wrapper.closed
-          && Objects.equals(target, wrapper.target)
+      return Objects.equals(target, wrapper.target)
           && Objects.equals(childPolicy, wrapper.childPolicy)
           && Objects.equals(lb, wrapper.lb)
           && Objects.equals(subchannel, wrapper.subchannel)
@@ -303,7 +299,7 @@ final class LbPolicyConfiguration {
 
     @Override
     public int hashCode() {
-      return Objects.hash(target, childPolicy, lb, subchannel, connectivityState, picker, closed);
+      return Objects.hash(target, childPolicy, lb, subchannel, connectivityState, picker);
     }
 
     @Override
@@ -315,7 +311,6 @@ final class LbPolicyConfiguration {
           .add("subchannel", subchannel)
           .add("connectivityState", connectivityState)
           .add("picker", picker)
-          .add("closed", closed)
           .toString();
     }
   }

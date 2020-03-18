@@ -25,7 +25,6 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import io.grpc.Attributes;
 import io.grpc.ConnectivityState;
-import io.grpc.ConnectivityStateInfo;
 import io.grpc.EquivalentAddressGroup;
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.CreateSubchannelArgs;
@@ -33,12 +32,12 @@ import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.ResolvedAddresses;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
-import io.grpc.LoadBalancer.SubchannelStateListener;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.ManagedChannel;
 import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
-import io.grpc.internal.AtomicBackoff;
+import io.grpc.internal.BackoffPolicy;
+import io.grpc.internal.ExponentialBackoffPolicy;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc.RouteLookupServiceStub;
 import io.grpc.rls.AdaptiveThrottler.SystemTicker;
@@ -53,7 +52,6 @@ import io.grpc.rls.RlsProtoData.RouteLookupResponse;
 import io.grpc.rls.Throttler.ThrottledException;
 import io.grpc.stub.StreamObserver;
 import io.grpc.util.ForwardingLoadBalancerHelper;
-import io.grpc.util.ForwardingSubchannel;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -93,13 +91,12 @@ final class AsyncCachingRlsClient {
   private final Executor executor;
   private final Ticker ticker;
   private final Throttler throttler;
+  private final BackoffPolicy.Provider backoffProvider;
 
   private final long maxAgeMillis;
   private final long staleAgeMillis;
   private final long callTimeoutMillis;
   private final long maxSizeBytes;
-  private final long initialBackoffTimeMillis;
-  private final long backoffExpirationTimeMillis;
   private final ChildLoadBalancerHelper helper;
   private final LbPolicyConfiguration lbPolicyConfig;
   private final ManagedChannel channel;
@@ -119,8 +116,6 @@ final class AsyncCachingRlsClient {
     this.maxAgeMillis = builder.maxAgeMillis;
     this.staleAgeMillis = builder.staleAgeMillis;
     this.callTimeoutMillis = builder.callTimeoutMillis;
-    this.initialBackoffTimeMillis = builder.initialBackoffTimeMillis;
-    this.backoffExpirationTimeMillis = builder.backoffExpirationTimeMillis;
     this.ticker = checkNotNull(builder.ticker, "ticker");
     this.maxSizeBytes = (int) builder.maxCacheSizeBytes;
     this.throttler = checkNotNull(builder.throttler, "throttler");
@@ -133,6 +128,7 @@ final class AsyncCachingRlsClient {
     this.stub = RouteLookupServiceGrpc.newStub(channel);
     this.childLbResolvedAddressFactory =
         checkNotNull(builder.childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
+    this.backoffProvider = builder.backoffProvider;
   }
 
   @CheckReturnValue
@@ -234,7 +230,7 @@ final class AsyncCachingRlsClient {
               new BackoffCacheEntry(
                   request,
                   Status.fromThrowable(e),
-                  new AtomicBackoff("rls:" + request.getServer(), initialBackoffTimeMillis)));
+                  backoffProvider.get()));
         }
       }
     }
@@ -328,7 +324,7 @@ final class AsyncCachingRlsClient {
   private final class PendingCacheEntry {
     private final ListenableFuture<RouteLookupResponse> pendingCall;
     private final RouteLookupRequest request;
-    private final AtomicBackoff backoff;
+    private final BackoffPolicy backoffPolicy;
 
     PendingCacheEntry(
         RouteLookupRequest request, ListenableFuture<RouteLookupResponse> pendingCall) {
@@ -338,14 +334,10 @@ final class AsyncCachingRlsClient {
     PendingCacheEntry(
         RouteLookupRequest request,
         ListenableFuture<RouteLookupResponse> pendingCall,
-        @Nullable AtomicBackoff.State backoffState) {
+        @Nullable BackoffPolicy backoffPolicy) {
       this.request = checkNotNull(request, "request");
       this.pendingCall = pendingCall;
-      if (backoffState == null) {
-        this.backoff = new AtomicBackoff("rls:" + request.getServer(), initialBackoffTimeMillis);
-      } else {
-        this.backoff = new AtomicBackoff("rls:" + request.getServer(), backoffState.get());
-      }
+      this.backoffPolicy = backoffPolicy == null ? backoffProvider.get() : backoffPolicy;
       pendingCall.addListener(new Runnable() {
         @Override
         public void run() {
@@ -379,7 +371,7 @@ final class AsyncCachingRlsClient {
 
     private void transitionToBackOff(Status status) {
       pendingCallCache.remove(request);
-      linkedHashLruCache.cache(request, new BackoffCacheEntry(request, status, backoff));
+      linkedHashLruCache.cache(request, new BackoffCacheEntry(request, status, backoffPolicy));
     }
 
     @Override
@@ -387,7 +379,7 @@ final class AsyncCachingRlsClient {
       return MoreObjects.toStringHelper(this)
           .add("pendingCall", pendingCall)
           .add("request", request)
-          .add("backoff", backoff)
+          .add("backoffPolicy", backoffPolicy)
           .toString();
     }
   }
@@ -551,17 +543,19 @@ final class AsyncCachingRlsClient {
   private final class BackoffCacheEntry extends CacheEntry {
 
     private final Status status;
-    private final AtomicBackoff.State backoffState;
     private final ScheduledFuture<?> scheduledFuture;
+    private final BackoffPolicy backoffPolicy;
+    private final long expireMills;
     private volatile boolean shutdown = false;
 
-    BackoffCacheEntry(RouteLookupRequest request, Status status, AtomicBackoff backoff) {
+    BackoffCacheEntry(RouteLookupRequest request, Status status, BackoffPolicy backoffPolicy) {
       super(request);
       this.status = checkNotNull(status, "status");
-      backoffState = checkNotNull(backoff, "backoff").getState();
-      backoffState.backoff();
-      System.out.println("backoff: " + status);
+      this.backoffPolicy = checkNotNull(backoffPolicy, "backoffPolicy");
+      //TODO removeme
       status.asException().printStackTrace(System.out);
+      long delay = backoffPolicy.nextBackoffNanos();
+      this.expireMills = ticker.nowInMillis() + TimeUnit.NANOSECONDS.toMillis(delay);
       this.scheduledFuture = scheduledExecutorService.schedule(
           new Runnable() {
             @Override
@@ -569,8 +563,8 @@ final class AsyncCachingRlsClient {
               transitionToPending();
             }
           },
-          Math.min(backoffState.get(), backoffExpirationTimeMillis),
-          TimeUnit.MILLISECONDS);
+          delay,
+          TimeUnit.NANOSECONDS);
     }
 
     /** Forcefully refreshes cache entry by ignoring the backoff timer. */
@@ -589,7 +583,7 @@ final class AsyncCachingRlsClient {
       synchronized (lock) {
         ListenableFuture<RouteLookupResponse> call = asyncRlsCall(request);
         if (!call.isDone()) {
-          PendingCacheEntry pendingEntry = new PendingCacheEntry(request, call, backoffState);
+          PendingCacheEntry pendingEntry = new PendingCacheEntry(request, call, backoffPolicy);
           pendingCallCache.put(request, pendingEntry);
           linkedHashLruCache.invalidate(request);
         } else {
@@ -597,11 +591,9 @@ final class AsyncCachingRlsClient {
             RouteLookupResponse response = call.get();
             linkedHashLruCache.cache(request, new DataCacheEntry(request, response));
           } catch (Exception e) {
-            AtomicBackoff backoff =
-                new AtomicBackoff("rls:" + request.getServer(), backoffState.get());
             linkedHashLruCache.cache(
                 request,
-                new BackoffCacheEntry(request, Status.fromThrowable(e), backoff));
+                new BackoffCacheEntry(request, Status.fromThrowable(e), backoffPolicy));
           }
         }
       }
@@ -623,7 +615,7 @@ final class AsyncCachingRlsClient {
 
     @Override
     boolean isExpired(long now) {
-      return backoffExpirationTimeMillis <= now;
+      return expireMills <= now;
     }
 
     @Override
@@ -643,7 +635,7 @@ final class AsyncCachingRlsClient {
     public String toString() {
       return MoreObjects.toStringHelper(this)
           .add("status", status)
-          .add("backoffState", backoffState)
+          .add("backoffPolicy", backoffPolicy)
           .add("scheduledFuture", scheduledFuture)
           .toString();
     }
@@ -703,13 +695,12 @@ final class AsyncCachingRlsClient {
     private long maxAgeMillis = TimeUnit.MINUTES.toMillis(5);
     private long staleAgeMillis = TimeUnit.MINUTES.toMillis(3);
     private long callTimeoutMillis = TimeUnit.SECONDS.toMillis(5);
-    private long initialBackoffTimeMillis = TimeUnit.SECONDS.toMillis(1);
-    private long backoffExpirationTimeMillis = TimeUnit.SECONDS.toMillis(30);
     private Ticker ticker = new SystemTicker();
     private Throttler throttler = new HappyThrottler();
     private EvictionListener<RouteLookupRequest, CacheEntry> evictionListener = null;
     private ManagedChannel channel;
     private ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
+    private BackoffPolicy.Provider backoffProvider = new ExponentialBackoffPolicy.Provider();
 
     public Builder setScheduledExecutorService(
         ScheduledExecutorService scheduledExecutorService) {
@@ -740,16 +731,6 @@ final class AsyncCachingRlsClient {
 
     public Builder setCallTimeoutMillis(long callTimeoutMillis) {
       this.callTimeoutMillis = callTimeoutMillis;
-      return this;
-    }
-
-    public Builder setInitialBackoffTimeMillis(long initialBackoffTimeMillis) {
-      this.initialBackoffTimeMillis = initialBackoffTimeMillis;
-      return this;
-    }
-
-    public Builder setBackoffExpirationTimeMillis(long backoffExpirationTimeMillis) {
-      this.backoffExpirationTimeMillis = backoffExpirationTimeMillis;
       return this;
     }
 
@@ -784,15 +765,20 @@ final class AsyncCachingRlsClient {
       return this;
     }
 
-    public AsyncCachingRlsClient build() {
-      return new AsyncCachingRlsClient(this);
-    }
-
     public Builder setChildLbResolvedAddressesFactory(
         ChildLbResolvedAddressFactory childLbResolvedAddressFactory) {
       this.childLbResolvedAddressFactory =
           checkNotNull(childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
       return this;
+    }
+
+    public Builder setBackoffProvider(BackoffPolicy.Provider provider) {
+      this.backoffProvider = checkNotNull(provider, "provider");
+      return this;
+    }
+
+    public AsyncCachingRlsClient build() {
+      return new AsyncCachingRlsClient(this);
     }
   }
 
@@ -819,6 +805,7 @@ final class AsyncCachingRlsClient {
     public void updateBalancingState(ConnectivityState newState, SubchannelPicker newPicker) {
       childPolicyWrapper.setPicker(newPicker);
       childPolicyWrapper.setConnectivityState(newState);
+      // super is doing the updateBalancingState
       super.updateBalancingState(newState, newPicker);
     }
 
@@ -835,25 +822,7 @@ final class AsyncCachingRlsClient {
     public Subchannel createSubchannel(CreateSubchannelArgs args) {
       final Subchannel sc = super.createSubchannel(args);
       childPolicyWrapper.setSubchannel(sc);
-      return new ForwardingSubchannel() {
-        @Override
-        protected Subchannel delegate() {
-          return sc;
-        }
-
-        @Override
-        public void start(final SubchannelStateListener listener) {
-          System.out.println("start is called!!!");
-          //TODO somehow update child policy wrapper
-          super.start(new SubchannelStateListener() {
-            @Override
-            public void onSubchannelState(ConnectivityStateInfo newState) {
-              System.out.println("!!! subchannel state changed (intercepted)");
-              listener.onSubchannelState(newState);
-            }
-          });
-        }
-      };
+      return super.createSubchannel(args);
     }
   }
 
