@@ -20,7 +20,6 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import io.grpc.Attributes;
 import io.grpc.ChannelLogger.ChannelLogLevel;
-import io.grpc.ConnectivityStateInfo;
 import io.grpc.EquivalentAddressGroup;
 import io.grpc.LoadBalancer;
 import io.grpc.ManagedChannel;
@@ -38,18 +37,9 @@ final class RlsLoadBalancer extends LoadBalancer {
   private LbPolicyConfiguration lbPolicyConfiguration;
   private AsyncCachingRlsClient routeLookupClient;
   private ManagedChannel rlsServerChannel;
-  private RlsPicker rlsPicker;
 
   RlsLoadBalancer(Helper helper) {
     this.helper = checkNotNull(helper, "helper");
-  }
-
-  @Override
-  @SuppressWarnings("deprecation")
-  public void handleSubchannelState(Subchannel subchannel, ConnectivityStateInfo stateInfo) {
-    // this can be almost ignored, ACLBF may ask to different state to go shutdown...
-    System.out.println("handleSubchannelState: " + subchannel + " info: " + stateInfo);
-    rlsPicker.handleSubchannelState(subchannel, stateInfo);
   }
 
   @Override
@@ -94,8 +84,8 @@ final class RlsLoadBalancer extends LoadBalancer {
                 .build();
         routeLookupClient = client;
         // rls picker will report to helper
-        this.rlsPicker =
-            new RlsPicker(lbPolicyConfiguration, client, helper, childLbResolvedAddressFactory);
+        RlsPicker rlsPicker = new RlsPicker(lbPolicyConfiguration, client, helper,
+            childLbResolvedAddressFactory);
         childBalancerHelper.setRlsPicker(rlsPicker);
       }
       // TODO(creamsoup) update configs if necessary (maybe easier to create new cache?)

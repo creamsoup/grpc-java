@@ -22,12 +22,10 @@ import com.google.common.base.MoreObjects;
 import com.google.common.collect.ConcurrentHashMultiset;
 import com.google.common.collect.Multiset;
 import io.grpc.ConnectivityState;
-import io.grpc.ConnectivityStateInfo;
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.PickResult;
 import io.grpc.LoadBalancer.PickSubchannelArgs;
-import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.Metadata;
@@ -222,17 +220,6 @@ final class RlsPicker extends SubchannelPicker {
           }
         });
     return readyLatch;
-  }
-
-  @SuppressWarnings("deprecation")
-  void handleSubchannelState(Subchannel subchannel, ConnectivityStateInfo stateInfo) {
-    // need a map of Subchannel to LB
-    //TODO remove this hack
-    ChildPolicyWrapper.lbs.get(subchannel).handleSubchannelState(subchannel, stateInfo);
-  }
-
-  abstract static class RlsSubchannelStateListener {
-    abstract void onSubchannelStateChange(String target, ConnectivityState newState);
   }
 
   static final class RlsSubchannelStateManager {

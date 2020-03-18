@@ -844,6 +844,7 @@ final class AsyncCachingRlsClient {
         @Override
         public void start(final SubchannelStateListener listener) {
           System.out.println("start is called!!!");
+          //TODO somehow update child policy wrapper
           super.start(new SubchannelStateListener() {
             @Override
             public void onSubchannelState(ConnectivityStateInfo newState) {

@@ -200,8 +200,6 @@ final class LbPolicyConfiguration {
 
     static final Map<String /* target */, RefCountedObjectPool<ChildPolicyWrapper>>
         childPolicyMap = new HashMap<>();
-    // TODO(creamsoup) removeme
-    static Map<Subchannel, LoadBalancer> lbs = new ConcurrentHashMap<>();
 
     private final String target;
     private ChildLoadBalancingPolicy childPolicy;
@@ -245,7 +243,6 @@ final class LbPolicyConfiguration {
 
     void setSubchannel(Subchannel subchannel) {
       this.subchannel = subchannel;
-      lbs.put(subchannel, lb);
     }
 
     Subchannel getSubchannel() {
