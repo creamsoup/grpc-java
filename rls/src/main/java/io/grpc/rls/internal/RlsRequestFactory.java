@@ -38,14 +38,14 @@ import javax.annotation.CheckReturnValue;
  * A RlsRequestFactory creates {@link RouteLookupRequest} using key builder map from {@link
  * RouteLookupConfig}.
  */
-public final class RlsRequestFactory {
+final class RlsRequestFactory {
 
   private final String target;
   // table of Path(serviceName.methodName or serviceName.*), rls request headerName, header fields
   private final Table<String, String, NameMatcher> keyBuilderTable;
 
   /** Constructor. */
-  public RlsRequestFactory(RouteLookupConfig rlsConfig) {
+  RlsRequestFactory(RouteLookupConfig rlsConfig) {
     checkNotNull(rlsConfig, "rlsConfig");
     this.target = rlsConfig.getLookupService();
     this.keyBuilderTable = createKeyBuilderTable(rlsConfig);
@@ -76,7 +76,7 @@ public final class RlsRequestFactory {
 
   /** Creates an {@link RouteLookupRequest} for given request's metadata. */
   @CheckReturnValue
-  public RouteLookupRequest create(String service, String method, Metadata metadata) {
+  RouteLookupRequest create(String service, String method, Metadata metadata) {
     checkNotNull(service, "service");
     checkNotNull(method, "method");
     // removing leading '/'

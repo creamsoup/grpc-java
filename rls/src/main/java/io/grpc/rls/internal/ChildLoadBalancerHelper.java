@@ -56,7 +56,7 @@ final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
     return rlsPicker.getSubchannelStateManager().getAggregatedState();
   }
 
-  public static final class ChildLoadBalancerHelperProvider {
+  static final class ChildLoadBalancerHelperProvider {
     private final Helper helper;
     private final RlsPicker rlsPicker;
 

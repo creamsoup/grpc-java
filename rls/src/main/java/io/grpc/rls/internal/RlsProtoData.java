@@ -38,7 +38,7 @@ public final class RlsProtoData {
 
   /** A request object sent to route lookup service. */
   @Immutable
-  public static final class RouteLookupRequest {
+  static final class RouteLookupRequest {
 
     private final String server;
 
@@ -119,7 +119,7 @@ public final class RlsProtoData {
 
   /** A response from route lookup service. */
   @Immutable
-  public static final class RouteLookupResponse {
+  static final class RouteLookupResponse {
 
     private final String target;
 
