@@ -31,6 +31,7 @@ import io.grpc.LoadBalancerProvider;
 import io.grpc.Metadata;
 import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
+import io.grpc.internal.PickSubchannelArgsImpl;
 import io.grpc.rls.internal.AsyncCachingRlsClient.CachedResponse;
 import io.grpc.rls.internal.AsyncCachingRlsClient.ChildPolicyReportingHelper;
 import io.grpc.rls.internal.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider;
@@ -94,47 +95,39 @@ final class RlsPicker extends SubchannelPicker {
     if (response.hasValidData()) {
       ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
       ConnectivityState connectivityState = childPolicyWrapper.getConnectivityState();
+      Metadata headers = new Metadata();
+      headers.merge(args.getHeaders());
+      headers.put(RLS_DATA_KEY, response.getHeaderData());
+      args = new PickSubchannelArgsImpl(args.getMethodDescriptor(), headers, args.getCallOptions());
       switch (connectivityState) {
         case CONNECTING:
-          return handlePendingRequest(args);
+          return PickResult.withNoResult();
         case IDLE:
           if (childPolicyWrapper.getPicker() == null) {
             return PickResult.withNoResult();
           }
-          return childPolicyWrapper.getPicker().pickSubchannel(args);
+          // fall through
         case READY:
           return childPolicyWrapper.getPicker().pickSubchannel(args);
         case TRANSIENT_FAILURE:
-          return handleError(Status.INTERNAL);
+          return handleError(args, Status.INTERNAL);
         case SHUTDOWN:
         default:
-          return handleError(Status.ABORTED);
+          return handleError(args, Status.ABORTED);
       }
     } else if (response.hasError()) {
-      return handleError(response.getStatus());
+      return handleError(args, response.getStatus());
     } else {
-      // pending request
-      return handlePendingRequest(args);
+      return PickResult.withNoResult();
     }
   }
 
-  private PickResult handleError(Status cause) {
+  private PickResult handleError(PickSubchannelArgs args, Status cause) {
     switch (strategy) {
       case SYNC_LOOKUP_CLIENT_SEES_ERROR:
         return PickResult.withError(cause);
       case SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR:
-        return useFallback(/* args= */ null);
-      default:
-        throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
-    }
-  }
-
-  private PickResult handlePendingRequest(PickSubchannelArgs args) {
-    switch (strategy) {
-      case SYNC_LOOKUP_CLIENT_SEES_ERROR:
-        // fall-through
-      case SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR:
-        return PickResult.withNoResult();
+        return useFallback(args);
       default:
         throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
     }
@@ -162,22 +155,22 @@ final class RlsPicker extends SubchannelPicker {
       return PickResult.withError(Status.fromThrowable(e));
     }
     System.out.println("FALLBACK!!!");
+    SubchannelPicker picker = fallbackChildPolicyWrapper.getPicker();
     switch (fallbackChildPolicyWrapper.getConnectivityState()) {
       case CONNECTING:
         return PickResult.withNoResult();
       case TRANSIENT_FAILURE:
-        // fall-through
+        // fall through
       case SHUTDOWN:
-        //TODO store status from child to return
+        //TODO store status from child policy wrapper to return
         return PickResult.withError(Status.UNKNOWN);
       case IDLE:
-        SubchannelPicker picker = fallbackChildPolicyWrapper.getPicker();
         if (picker == null) {
           return PickResult.withNoResult();
         }
-        return picker.pickSubchannel(args);
+        // fall through
       case READY:
-        return fallbackChildPolicyWrapper.getPicker().pickSubchannel(args);
+        return picker.pickSubchannel(args);
       default:
         throw new AssertionError();
     }

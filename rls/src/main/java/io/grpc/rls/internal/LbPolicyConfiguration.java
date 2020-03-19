@@ -50,7 +50,9 @@ public final class LbPolicyConfiguration {
   private final RouteLookupConfig routeLookupConfig;
   private final ChildLoadBalancingPolicy policy;
 
-  public LbPolicyConfiguration(RouteLookupConfig routeLookupConfig, ChildLoadBalancingPolicy policy) {
+  /** Constructor. */
+  public LbPolicyConfiguration(
+      RouteLookupConfig routeLookupConfig, ChildLoadBalancingPolicy policy) {
     this.routeLookupConfig = checkNotNull(routeLookupConfig, "routeLookupConfig");
     this.policy = checkNotNull(policy, "policy");
   }
@@ -100,6 +102,7 @@ public final class LbPolicyConfiguration {
     private final ConcurrentMap<String /* path */, PendingRlsRequest> pendingRequests
         = new ConcurrentHashMap<>();
 
+    /** Constructor. */
     public ChildLoadBalancingPolicy(
         String childPolicyConfigTargetFieldName,
         List<Map<String, ?>> childPolicies) {
@@ -136,6 +139,7 @@ public final class LbPolicyConfiguration {
       return childPolicyConfigTargetFieldName;
     }
 
+    /** Creates a load balancer config for given target. */
     @SuppressWarnings("unchecked")
     public Map<String, ?> getEffectiveChildPolicy(String target) {
       checkState(

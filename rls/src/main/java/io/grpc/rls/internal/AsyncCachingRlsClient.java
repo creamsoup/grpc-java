@@ -16,7 +16,6 @@
 
 package io.grpc.rls.internal;
 
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
@@ -160,7 +159,9 @@ public final class AsyncCachingRlsClient {
 
               @Override
               public void onError(Throwable t) {
-                new RuntimeException("oops " + System.currentTimeMillis(), t).printStackTrace(System.out);
+                // todo removeme
+                new RuntimeException("oops " + System.currentTimeMillis(), t)
+                    .printStackTrace(System.out);
                 response.setException(t);
                 throttler.registerBackendResponse(false);
               }
@@ -749,6 +750,9 @@ public final class AsyncCachingRlsClient {
       return this;
     }
 
+    /**
+     * Sets a factory to create {@link ResolvedAddresses} for child load balancer.
+     */
     public Builder setChildLbResolvedAddressesFactory(
         ChildLbResolvedAddressFactory childLbResolvedAddressFactory) {
       this.childLbResolvedAddressFactory =
@@ -791,6 +795,7 @@ public final class AsyncCachingRlsClient {
       childPolicyWrapper.setConnectivityState(newState);
       // super is doing the updateBalancingState
       super.updateBalancingState(newState, newPicker);
+      // TODO(creamsoup) when it becomes ready may refresh invalid backoffs
     }
 
     @Override

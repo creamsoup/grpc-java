@@ -16,7 +16,13 @@
 
 package io.grpc.rls.testing;
 
+import io.grpc.Metadata;
 import io.grpc.Server;
+import io.grpc.ServerCall;
+import io.grpc.ServerCall.Listener;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
+import io.grpc.ServerInterceptors;
 import io.grpc.lookup.v1.BackendServiceGrpc;
 import io.grpc.lookup.v1.EchoRequest;
 import io.grpc.lookup.v1.EchoResponse;
@@ -39,6 +45,14 @@ public final class Backend {
         NettyServerBuilder
             .forPort(port)
             .addService(new BackendImpl(port))
+            .intercept(new ServerInterceptor() {
+              @Override
+              public <ReqT, RespT> Listener<ReqT> interceptCall(ServerCall<ReqT, RespT> call,
+                  Metadata headers, ServerCallHandler<ReqT, RespT> next) {
+                System.out.println("received headers: " + headers);
+                return next.startCall(call, headers);
+              }
+            })
             .build();
     try {
       server.start();
