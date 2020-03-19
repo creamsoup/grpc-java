@@ -16,6 +16,7 @@
 
 package io.grpc.rls.internal;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
@@ -434,15 +435,18 @@ public final class AsyncCachingRlsClient {
       staleTime = now + staleAgeNanos;
       linkedHashLruCache.updateEntrySize(request);
 
-      if (childPolicyWrapper.getPicker() == null) {
-        //TODO refactor this to util method (so fallback can also use it)
-        // set picker etc
+      if (childPolicyWrapper.getPicker() != null) {
+        childPolicyWrapper
+            .getHelper()
+            .updateBalancingState(
+                childPolicyWrapper.getConnectivityState(), childPolicyWrapper.getPicker());
+      } else {
         childPolicyWrapper.setChildPolicy(lbPolicyConfig.getLoadBalancingPolicy());
         LoadBalancerProvider lbProvider = childPolicyWrapper
             .getChildPolicy()
             .getEffectiveLbProvider();
         ChildPolicyReportingHelper childPolicyReportingHelper =
-            new ChildPolicyReportingHelper(childLbHelperProvider.forTarget(response.getTarget()), childPolicyWrapper);
+            new ChildPolicyReportingHelper(childLbHelperProvider, childPolicyWrapper);
         LoadBalancer lb =
             lbProvider.newLoadBalancer(childPolicyReportingHelper);
         childPolicyWrapper.setLoadBalancer(lb);
@@ -450,16 +454,10 @@ public final class AsyncCachingRlsClient {
         ConfigOrError lbConfig = lbProvider
             .parseLoadBalancingPolicyConfig(
                 childPolicyWrapper.getChildPolicy().getEffectiveChildPolicy(response.getTarget()));
-        ResolvedAddresses resolvedAddresses = childLbResolvedAddressFactory
-            .create(lbConfig.getConfig());
+        ResolvedAddresses resolvedAddresses =
+            childLbResolvedAddressFactory.create(lbConfig.getConfig());
         lb.handleResolvedAddresses(resolvedAddresses);
         lb.requestConnection();
-      } else {
-        System.out.println("reusing childPolicyWrapper for " + response);
-        childPolicyWrapper
-            .getHelper()
-            .updateBalancingState(
-                childPolicyWrapper.getConnectivityState(), childPolicyWrapper.getPicker());
       }
     }
 
@@ -554,8 +552,6 @@ public final class AsyncCachingRlsClient {
       super(request);
       this.status = checkNotNull(status, "status");
       this.backoffPolicy = checkNotNull(backoffPolicy, "backoffPolicy");
-      //TODO removeme
-      status.asException().printStackTrace(System.out);
       long delayNanos = backoffPolicy.nextBackoffNanos();
       this.expireMills = timeProvider.currentTimeNanos() + delayNanos;
       this.scheduledFuture = scheduledExecutorService.schedule(
@@ -777,10 +773,11 @@ public final class AsyncCachingRlsClient {
     private final ChildPolicyWrapper childPolicyWrapper;
 
     public ChildPolicyReportingHelper(
-        ChildLoadBalancerHelper delegate,
+        ChildLoadBalancerHelperProvider childHelperProvider,
         ChildPolicyWrapper childPolicyWrapper) {
-      this.delegate = checkNotNull(delegate, "delegate");
       this.childPolicyWrapper = checkNotNull(childPolicyWrapper, "childPolicyWrapper");
+      checkNotNull(childHelperProvider, "childHelperProvider");
+      this.delegate = childHelperProvider.forTarget(childPolicyWrapper.getTarget());
     }
 
     @Override

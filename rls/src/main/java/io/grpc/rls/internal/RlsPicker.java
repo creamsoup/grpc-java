@@ -123,9 +123,7 @@ final class RlsPicker extends SubchannelPicker {
       case SYNC_LOOKUP_CLIENT_SEES_ERROR:
         return PickResult.withError(cause);
       case SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR:
-        return useFallback(/* args= */ null, /* blocking= */ true);
-      case ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS:
-        return useFallback(/* args= */ null, /* blocking= */ false);
+        return useFallback(/* args= */ null);
       default:
         throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
     }
@@ -137,9 +135,6 @@ final class RlsPicker extends SubchannelPicker {
         // fall-through
       case SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR:
         return PickResult.withNoResult();
-      case ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS:
-        // use default target
-        return useFallback(args, /* blocking= */ false);
       default:
         throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
     }
@@ -148,25 +143,23 @@ final class RlsPicker extends SubchannelPicker {
   private ChildPolicyWrapper fallbackChildPolicyWrapper;
 
   /** Uses Subchannel connected to default target. */
-  private PickResult useFallback(PickSubchannelArgs args, boolean blocking) {
+  private PickResult useFallback(PickSubchannelArgs args) {
     CountDownLatch readyLatch = new CountDownLatch(0);
     String defaultTarget = lbPolicyConfiguration.getRouteLookupConfig().getDefaultTarget();
     if (fallbackChildPolicyWrapper == null
         || !fallbackChildPolicyWrapper.getTarget().equals(defaultTarget)) {
       readyLatch = startFallbackChildPolicy();
     }
-    if (blocking) {
-      try {
-        readyLatch
-            .await(
-                lbPolicyConfiguration.getRouteLookupConfig().getLookupServiceTimeoutInMillis(),
-                TimeUnit.MILLISECONDS);
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        return PickResult.withError(Status.ABORTED.withDescription("interrupted"));
-      } catch (Exception e) {
-        return PickResult.withError(Status.fromThrowable(e));
-      }
+    try {
+      readyLatch
+          .await(
+              lbPolicyConfiguration.getRouteLookupConfig().getLookupServiceTimeoutInMillis(),
+              TimeUnit.MILLISECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return PickResult.withError(Status.ABORTED.withDescription("interrupted"));
+    } catch (Exception e) {
+      return PickResult.withError(Status.fromThrowable(e));
     }
     System.out.println("FALLBACK!!!");
     switch (fallbackChildPolicyWrapper.getConnectivityState()) {
@@ -197,9 +190,8 @@ final class RlsPicker extends SubchannelPicker {
 
     final LoadBalancerProvider lbProvider =
         lbPolicyConfiguration.getLoadBalancingPolicy().getEffectiveLbProvider();
-    ChildLoadBalancerHelper delegate = childLbHelperProvider.forTarget(defaultTarget);
     ChildPolicyReportingHelper childPolicyReportingHelper =
-        new ChildPolicyReportingHelper(delegate, fallbackChildPolicyWrapper);
+        new ChildPolicyReportingHelper(childLbHelperProvider, fallbackChildPolicyWrapper);
     final LoadBalancer lb =
         lbProvider.newLoadBalancer(childPolicyReportingHelper);
     final ConfigOrError lbConfig =

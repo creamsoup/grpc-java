@@ -279,7 +279,9 @@ public final class Client {
           + "  \"validTargets\": [\"localhost:9001\", \"localhost:9002\"],"
           + "  \"cacheSizeBytes\": 1000,\n"
           + "  \"defaultTarget\": \"defaultTarget\",\n"
-          + "  \"requestProcessingStrategy\": \"ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS\"\n"
+          + "  \"requestProcessingStrategy\": \"SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR\"\n"
+        // SYNC_LOOKUP_CLIENT_SEES_ERROR
+        // SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR
           + "}";
   }
 }

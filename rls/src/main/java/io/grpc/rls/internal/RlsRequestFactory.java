@@ -59,7 +59,6 @@ final class RlsRequestFactory {
         List<String> requestHeaders = nameMatcher.names();
         for (Name name : grpcKeyBuilder.getNames()) {
           String method =
-              // proto -> json let this null fixme
               (name.getMethod() == null || name.getMethod().isEmpty())
                   ? "*"
                   : name.getMethod();

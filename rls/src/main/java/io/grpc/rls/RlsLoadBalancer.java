@@ -80,9 +80,7 @@ final class RlsLoadBalancer extends LoadBalancer {
                 .setLbPolicyConfig(lbPolicyConfiguration)
                 .build();
       }
-      // TODO(creamsoup) update configs if necessary (maybe easier to create new cache?)
-      //  for v1 implementation this is not required.
-
+      // TODO(creamsoup) update configs if necessary, for v1 implementation this is not required.
       this.lbPolicyConfiguration = lbPolicyConfiguration;
       helper.getChannelLogger()
           .log(ChannelLogLevel.INFO, "LbPolicyConfiguration updated to {0}", lbPolicyConfiguration);

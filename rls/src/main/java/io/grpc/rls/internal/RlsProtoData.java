@@ -238,9 +238,7 @@ public final class RlsProtoData {
       this.requestProcessingStrategy = requestProcessingStrategy;
       checkNotNull(requestProcessingStrategy, "requestProcessingStrategy");
       checkState(
-          !((requestProcessingStrategy == RequestProcessingStrategy.SYNC_LOOKUP_CLIENT_SEES_ERROR
-              || requestProcessingStrategy
-              == RequestProcessingStrategy.ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS)
+          !(requestProcessingStrategy == RequestProcessingStrategy.SYNC_LOOKUP_CLIENT_SEES_ERROR
               && defaultTarget.isEmpty()),
           "defaultTarget cannot be empty if strategy is %s",
           requestProcessingStrategy);
@@ -303,13 +301,10 @@ public final class RlsProtoData {
     }
 
     /**
-     * Returns the default target to use. It will be used for request processing strategy
-     * {@link RequestProcessingStrategy#SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR} if RLS
-     * returns an error, or strategy {@link
-     * RequestProcessingStrategy#ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS} if RLS returns an error or
-     * there is a cache miss in the client.  It will also be used if there are no healthy backends
-     * for an RLS target. Note that requests can be routed only to a subdomain of the original
-     * target, {@literal e.g.} "us_east_1.cloudbigtable.googleapis.com".
+     * Returns the default target to use if needed.  If nonempty (implies request processing
+     * strategy SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR is set), it will be used if RLS returns an
+     * error.  Note that requests can be routed only to a subdomain of the original target,
+     * {@literal e.g.} "us_east_1.cloudbigtable.googleapis.com".
      */
     public String getDefaultTarget() {
       return defaultTarget;
@@ -394,13 +389,6 @@ public final class RlsProtoData {
      * strict regional routing requirements should use this strategy.
      */
     SYNC_LOOKUP_CLIENT_SEES_ERROR,
-
-    /**
-     * Query the RLS asynchronously but respond with the default target.  The target in the lookup
-     * response will then be cached and used for subsequent requests.  Services with strict latency
-     * requirements (but not strict regional routing requirements) should use this strategy.
-     */
-    ASYNC_LOOKUP_DEFAULT_TARGET_ON_MISS;
   }
 
   /**
