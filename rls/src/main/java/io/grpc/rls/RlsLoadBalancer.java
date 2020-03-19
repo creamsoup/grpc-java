@@ -27,6 +27,7 @@ import io.grpc.rls.internal.AsyncCachingRlsClient;
 import io.grpc.rls.internal.ChildLbResolvedAddressFactory;
 import io.grpc.rls.internal.LbPolicyConfiguration;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Implementation of {@link LoadBalancer} backed by route lookup service.
@@ -69,10 +70,11 @@ final class RlsLoadBalancer extends LoadBalancer {
             AsyncCachingRlsClient.newBuilder()
                 .setChildLbResolvedAddressesFactory(childLbResolvedAddressFactory)
                 .setChannel(rlsServerChannel)
-                .setMaxAgeMillis(rlsConfig.getMaxAgeInMillis())
-                .setStaleAgeMillis(rlsConfig.getStaleAgeInMillis())
+                .setMaxAgeNanos(TimeUnit.MILLISECONDS.toNanos(rlsConfig.getMaxAgeInMillis()))
+                .setStaleAgeNanos(TimeUnit.MILLISECONDS.toNanos(rlsConfig.getStaleAgeInMillis()))
+                .setCallTimeoutNanos(
+                    TimeUnit.MILLISECONDS.toNanos(rlsConfig.getLookupServiceTimeoutInMillis()))
                 .setMaxCacheSizeBytes(rlsConfig.getCacheSizeBytes())
-                .setCallTimeoutMillis(rlsConfig.getLookupServiceTimeoutInMillis())
                 .setThrottler(throttler)
                 .setHelper(helper)
                 .setLbPolicyConfig(lbPolicyConfiguration)

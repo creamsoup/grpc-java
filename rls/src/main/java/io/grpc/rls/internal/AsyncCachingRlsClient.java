@@ -36,6 +36,7 @@ import io.grpc.LoadBalancerProvider;
 import io.grpc.ManagedChannel;
 import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
+import io.grpc.SynchronizationContext;
 import io.grpc.internal.BackoffPolicy;
 import io.grpc.internal.ExponentialBackoffPolicy;
 import io.grpc.internal.TimeProvider;
@@ -54,7 +55,6 @@ import io.grpc.util.ForwardingLoadBalancerHelper;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -87,51 +87,50 @@ public final class AsyncCachingRlsClient {
   private final LinkedHashLruCache<RouteLookupRequest, CacheEntry> linkedHashLruCache;
   // any RPC on the fly will cached in this map
   private final Map<RouteLookupRequest, PendingCacheEntry> pendingCallCache = new HashMap<>();
-  private final Executor syncronizedContext;
+  private final SynchronizationContext synchronizationContext;
   private final TimeProvider timeProvider;
   private final Throttler throttler;
   private final BackoffPolicy.Provider backoffProvider;
 
-  private final long maxAgeMillis;
-  private final long staleAgeMillis;
-  private final long callTimeoutMillis;
-  private final long maxSizeBytes;
-  private final Helper helper;
+  private final long maxAgeNanos;
+  private final long staleAgeNanos;
+  private final long callTimeoutNanos;
   private final LbPolicyConfiguration lbPolicyConfig;
   private final ManagedChannel channel;
   private final ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
   private final RouteLookupServiceStub stub;
-  private final RlsPicker rlsPicker;
   private final ChildLoadBalancerHelperProvider childLbHelperProvider;
 
   AsyncCachingRlsClient(final Builder builder) {
-    this.helper = checkNotNull(builder.helper, "helper");
+    Helper helper = checkNotNull(builder.helper, "helper");
     this.scheduledExecutorService = helper.getScheduledExecutorService();
-    this.syncronizedContext = helper.getSynchronizationContext();
-    checkState(builder.maxAgeMillis > 0, "maxAgeMillis should be positive");
-    checkState(builder.staleAgeMillis > 0, "staleAgeMillis should be positive");
+    this.synchronizationContext = helper.getSynchronizationContext();
+    checkState(builder.maxAgeNanos > 0, "maxAgeMillis should be positive");
+    checkState(builder.staleAgeNanos > 0, "staleAgeMillis should be positive");
     checkState(
-        builder.maxAgeMillis >= builder.staleAgeMillis,
+        builder.maxAgeNanos >= builder.staleAgeNanos,
         "maxAgeMillis should be greater than equals to staleAgeMillis");
-    checkState(builder.callTimeoutMillis > 0, "callTimeoutMillis should be positive");
-    this.maxAgeMillis = builder.maxAgeMillis;
-    // TODO(creamsoup) change to nanos
-    this.staleAgeMillis = builder.staleAgeMillis;
-    this.callTimeoutMillis = builder.callTimeoutMillis;
+    checkState(builder.callTimeoutNanos > 0, "callTimeoutMillis should be positive");
+    this.maxAgeNanos = builder.maxAgeNanos;
+    this.staleAgeNanos = builder.staleAgeNanos;
+    this.callTimeoutNanos = builder.callTimeoutNanos;
     this.timeProvider = checkNotNull(builder.timeProvider, "ticker");
-    this.maxSizeBytes = (int) builder.maxCacheSizeBytes;
     this.throttler = checkNotNull(builder.throttler, "throttler");
     this.linkedHashLruCache =
         new RlsAsyncLruCache(
-            maxSizeBytes, builder.evictionListener, scheduledExecutorService, timeProvider);
+            builder.maxCacheSizeBytes,
+            builder.evictionListener,
+            scheduledExecutorService,
+            timeProvider);
     this.lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
     this.channel = checkNotNull(builder.channel, "subchannel");
     this.stub = RouteLookupServiceGrpc.newStub(channel);
     this.childLbResolvedAddressFactory =
         checkNotNull(builder.childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
     this.backoffProvider = builder.backoffProvider;
-    this.rlsPicker = new RlsPicker(lbPolicyConfig, this, helper, childLbResolvedAddressFactory);
-    this.childLbHelperProvider = new ChildLoadBalancerHelperProvider(helper, rlsPicker);
+    this.childLbHelperProvider =
+        new ChildLoadBalancerHelperProvider(
+            helper, new RlsPicker(lbPolicyConfig, this, helper, childLbResolvedAddressFactory));
   }
 
   @CheckReturnValue
@@ -148,7 +147,7 @@ public final class AsyncCachingRlsClient {
     io.grpc.lookup.v1.RouteLookupRequest rlsRequest = reqConverter.convert(request);
     System.out.println("time: " + System.currentTimeMillis());
     System.out.println("channel status: " + channel.getState(false));
-    stub.withDeadlineAfter(callTimeoutMillis, TimeUnit.MILLISECONDS)
+    stub.withDeadlineAfter(callTimeoutNanos, TimeUnit.NANOSECONDS)
         .routeLookup(
             rlsRequest,
             new StreamObserver<io.grpc.lookup.v1.RouteLookupResponse>() {
@@ -346,7 +345,7 @@ public final class AsyncCachingRlsClient {
         public void run() {
           handleDoneFuture();
         }
-      }, syncronizedContext);
+      }, synchronizationContext);
     }
 
     private void handleDoneFuture() {
@@ -431,8 +430,8 @@ public final class AsyncCachingRlsClient {
 
       childPolicyWrapper = ChildPolicyWrapper.createOrGet(response.getTarget());
       long now = timeProvider.currentTimeNanos();
-      expireTime = now + TimeUnit.MILLISECONDS.toNanos(maxAgeMillis);
-      staleTime = now + TimeUnit.MILLISECONDS.toNanos(staleAgeMillis);
+      expireTime = now + maxAgeNanos;
+      staleTime = now + staleAgeNanos;
       linkedHashLruCache.updateEntrySize(request);
 
       if (childPolicyWrapper.getPicker() == null) {
@@ -693,9 +692,9 @@ public final class AsyncCachingRlsClient {
     private Helper helper;
     private LbPolicyConfiguration lbPolicyConfig;
     private long maxCacheSizeBytes = 100 * 1024 * 1024; // 100 MB
-    private long maxAgeMillis = TimeUnit.MINUTES.toMillis(5);
-    private long staleAgeMillis = TimeUnit.MINUTES.toMillis(3);
-    private long callTimeoutMillis = TimeUnit.SECONDS.toMillis(5);
+    private long maxAgeNanos = TimeUnit.MINUTES.toNanos(5);
+    private long staleAgeNanos = TimeUnit.MINUTES.toNanos(3);
+    private long callTimeoutNanos = TimeUnit.SECONDS.toNanos(5);
     private TimeProvider timeProvider = TimeProvider.SYSTEM_TIME_PROVIDER;
     private Throttler throttler = new HappyThrottler();
     private EvictionListener<RouteLookupRequest, CacheEntry> evictionListener = null;
@@ -708,18 +707,18 @@ public final class AsyncCachingRlsClient {
       return this;
     }
 
-    public Builder setMaxAgeMillis(long maxAgeMillis) {
-      this.maxAgeMillis = maxAgeMillis;
+    public Builder setMaxAgeNanos(long maxAgeNanos) {
+      this.maxAgeNanos = maxAgeNanos;
       return this;
     }
 
-    public Builder setStaleAgeMillis(long staleAgeMillis) {
-      this.staleAgeMillis = staleAgeMillis;
+    public Builder setStaleAgeNanos(long staleAgeNanos) {
+      this.staleAgeNanos = staleAgeNanos;
       return this;
     }
 
-    public Builder setCallTimeoutMillis(long callTimeoutMillis) {
-      this.callTimeoutMillis = callTimeoutMillis;
+    public Builder setCallTimeoutNanos(long callTimeoutNanos) {
+      this.callTimeoutNanos = callTimeoutNanos;
       return this;
     }
 
