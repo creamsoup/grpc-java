@@ -92,13 +92,10 @@ final class RlsPicker extends SubchannelPicker {
         requestFactory.create(methodName[0], methodName[1], args.getHeaders());
     final CachedResponse response = rlsClient.get(request);
 
+    PickSubchannelArgs rlsAppliedArgs = getApplyRlsHeader(args, response);
     if (response.hasValidData()) {
       ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
       ConnectivityState connectivityState = childPolicyWrapper.getConnectivityState();
-      Metadata headers = new Metadata();
-      headers.merge(args.getHeaders());
-      headers.put(RLS_DATA_KEY, response.getHeaderData());
-      args = new PickSubchannelArgsImpl(args.getMethodDescriptor(), headers, args.getCallOptions());
       switch (connectivityState) {
         case CONNECTING:
           return PickResult.withNoResult();
@@ -108,18 +105,30 @@ final class RlsPicker extends SubchannelPicker {
           }
           // fall through
         case READY:
-          return childPolicyWrapper.getPicker().pickSubchannel(args);
+          return childPolicyWrapper.getPicker().pickSubchannel(rlsAppliedArgs);
         case TRANSIENT_FAILURE:
-          return handleError(args, Status.INTERNAL);
+          return handleError(rlsAppliedArgs, Status.INTERNAL);
         case SHUTDOWN:
         default:
-          return handleError(args, Status.ABORTED);
+          return handleError(rlsAppliedArgs, Status.ABORTED);
       }
     } else if (response.hasError()) {
-      return handleError(args, response.getStatus());
+      return handleError(rlsAppliedArgs, response.getStatus());
     } else {
       return PickResult.withNoResult();
     }
+  }
+
+  private PickSubchannelArgs getApplyRlsHeader(PickSubchannelArgs args, CachedResponse response) {
+    if (response.getHeaderData() == null || response.getHeaderData().isEmpty()) {
+      return args;
+    }
+
+    Metadata headers = new Metadata();
+    headers.merge(args.getHeaders());
+    headers.put(RLS_DATA_KEY, response.getHeaderData());
+    args = new PickSubchannelArgsImpl(args.getMethodDescriptor(), headers, args.getCallOptions());
+    return args;
   }
 
   private PickResult handleError(PickSubchannelArgs args, Status cause) {
