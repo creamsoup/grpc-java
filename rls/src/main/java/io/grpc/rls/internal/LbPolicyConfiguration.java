@@ -27,9 +27,10 @@ import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.LoadBalancerRegistry;
-import io.grpc.internal.AtomicBackoff;
+import io.grpc.internal.BackoffPolicy;
 import io.grpc.internal.ObjectPool;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
+import io.grpc.rls.internal.RlsProtoData.RouteLookupRequest;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -38,8 +39,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -97,10 +96,7 @@ public final class LbPolicyConfiguration {
     private final Map<String, Object> effectiveRawChildPolicy;
     private final LoadBalancerProvider effectiveLbProvider;
     private final String childPolicyConfigTargetFieldName;
-
-    // path to Currently pending RLS requests.
-    private final ConcurrentMap<String /* path */, PendingRlsRequest> pendingRequests
-        = new ConcurrentHashMap<>();
+    private final Map<String, PendingRlsRequest> pendingRequests = new HashMap<>();
 
     /** Constructor. */
     public ChildLoadBalancingPolicy(
@@ -133,10 +129,6 @@ public final class LbPolicyConfiguration {
           "no valid childPolicy found, policy tried: %s", policyTried);
       this.effectiveRawChildPolicy = effectiveChildPolicy;
       this.effectiveLbProvider = effectiveLbProvider;
-    }
-
-    public String getChildPolicyConfigTargetFieldName() {
-      return childPolicyConfigTargetFieldName;
     }
 
     /** Creates a load balancer config for given target. */
@@ -189,10 +181,8 @@ public final class LbPolicyConfiguration {
     }
 
     static final class PendingRlsRequest {
-      //TODO impl
-      // state for the pending RLS request (will be only pending)?????
-      // should it contain list of requests???
-      AtomicBackoff backoff; // backoff status (doesn't mean it is backoff status)
+      RouteLookupRequest request;
+      BackoffPolicy backoffPolicy;
     }
   }
 
@@ -218,6 +208,7 @@ public final class LbPolicyConfiguration {
     }
 
     static ChildPolicyWrapper createOrGet(String target) {
+      Collections.m
       ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(target);
       if (existing != null) {
         return existing.getObject();
