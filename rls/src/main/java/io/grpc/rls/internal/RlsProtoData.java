@@ -374,7 +374,7 @@ public final class RlsProtoData {
   }
 
   /** RequestProcessingStrategy specifies how to process a request when not already in the cache. */
-  enum RequestProcessingStrategy {
+  public enum RequestProcessingStrategy {
     /**
      * Query the RLS and process the request using target returned by the lookup. The target will
      * then be cached and used for processing subsequent requests for the same key. Any errors

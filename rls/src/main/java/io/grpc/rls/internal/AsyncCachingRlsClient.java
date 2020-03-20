@@ -42,6 +42,7 @@ import io.grpc.internal.ExponentialBackoffPolicy;
 import io.grpc.internal.TimeProvider;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc.RouteLookupServiceStub;
+import io.grpc.rls.internal.AsyncCachingRlsClient.ChildPolicyReportingHelper.ChildLbStatusListener;
 import io.grpc.rls.internal.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider;
 import io.grpc.rls.internal.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.internal.LruCache.EvictionListener;
@@ -100,17 +101,19 @@ public final class AsyncCachingRlsClient {
   private final ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
   private final RouteLookupServiceStub stub;
   private final ChildLoadBalancerHelperProvider childLbHelperProvider;
+  @Nullable
+  private final ChildLbStatusListener childLbStatusListener;
 
   AsyncCachingRlsClient(final Builder builder) {
     Helper helper = checkNotNull(builder.helper, "helper");
     this.scheduledExecutorService = helper.getScheduledExecutorService();
     this.synchronizationContext = helper.getSynchronizationContext();
-    checkState(builder.maxAgeNanos > 0, "maxAgeMillis should be positive");
-    checkState(builder.staleAgeNanos > 0, "staleAgeMillis should be positive");
+    checkState(builder.maxAgeNanos > 0, "maxAgeNanos should be positive");
+    checkState(builder.staleAgeNanos > 0, "staleAgeNanos should be positive");
     checkState(
         builder.maxAgeNanos >= builder.staleAgeNanos,
-        "maxAgeMillis should be greater than equals to staleAgeMillis");
-    checkState(builder.callTimeoutNanos > 0, "callTimeoutMillis should be positive");
+        "maxAgeNanos should be greater than equals to staleAgeMillis");
+    checkState(builder.callTimeoutNanos > 0, "callTimeoutNanos should be positive");
     this.maxAgeNanos = builder.maxAgeNanos;
     this.staleAgeNanos = builder.staleAgeNanos;
     this.callTimeoutNanos = builder.callTimeoutNanos;
@@ -123,7 +126,7 @@ public final class AsyncCachingRlsClient {
             scheduledExecutorService,
             timeProvider);
     this.lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
-    this.channel = checkNotNull(builder.channel, "subchannel");
+    this.channel = checkNotNull(builder.channel, "channel");
     this.stub = RouteLookupServiceGrpc.newStub(channel);
     this.childLbResolvedAddressFactory =
         checkNotNull(builder.childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
@@ -131,6 +134,26 @@ public final class AsyncCachingRlsClient {
     this.childLbHelperProvider =
         new ChildLoadBalancerHelperProvider(
             helper, new RlsPicker(lbPolicyConfig, this, helper, childLbResolvedAddressFactory));
+    if (builder.refreshBackoffEntries) {
+      childLbStatusListener = new ChildLbStatusListener() {
+        ConnectivityState prevState = null;
+
+        @Override
+        public void onStatusChanged(ConnectivityState newState) {
+          if (prevState == ConnectivityState.TRANSIENT_FAILURE
+              && newState == ConnectivityState.READY) {
+            for (CacheEntry value : linkedHashLruCache.values()) {
+              if (value instanceof BackoffCacheEntry) {
+                ((BackoffCacheEntry) value).forceRefresh();
+              }
+            }
+          }
+          prevState = newState;
+        }
+      };
+    } else {
+      childLbStatusListener = null;
+    }
   }
 
   @CheckReturnValue
@@ -447,7 +470,9 @@ public final class AsyncCachingRlsClient {
             .getChildPolicy()
             .getEffectiveLbProvider();
         ChildPolicyReportingHelper childPolicyReportingHelper =
-            new ChildPolicyReportingHelper(childLbHelperProvider, childPolicyWrapper);
+            new ChildPolicyReportingHelper(
+                childLbHelperProvider, childPolicyWrapper, childLbStatusListener);
+
         LoadBalancer lb =
             lbProvider.newLoadBalancer(childPolicyReportingHelper);
         childPolicyWrapper.setLoadBalancer(lb);
@@ -698,6 +723,7 @@ public final class AsyncCachingRlsClient {
     private ManagedChannel channel;
     private ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
     private BackoffPolicy.Provider backoffProvider = new ExponentialBackoffPolicy.Provider();
+    private boolean refreshBackoffEntries = false;
 
     public Builder setMaxCacheSizeBytes(long maxCacheSizeBytes) {
       this.maxCacheSizeBytes = maxCacheSizeBytes;
@@ -765,6 +791,11 @@ public final class AsyncCachingRlsClient {
       return this;
     }
 
+    public Builder refreshBackoffEntries() {
+      this.refreshBackoffEntries = true;
+      return this;
+    }
+
     public AsyncCachingRlsClient build() {
       return new AsyncCachingRlsClient(this);
     }
@@ -775,13 +806,16 @@ public final class AsyncCachingRlsClient {
 
     private final ChildLoadBalancerHelper delegate;
     private final ChildPolicyWrapper childPolicyWrapper;
+    private final ChildLbStatusListener listener;
 
     public ChildPolicyReportingHelper(
         ChildLoadBalancerHelperProvider childHelperProvider,
-        ChildPolicyWrapper childPolicyWrapper) {
+        ChildPolicyWrapper childPolicyWrapper,
+        @Nullable ChildLbStatusListener listener) {
       this.childPolicyWrapper = checkNotNull(childPolicyWrapper, "childPolicyWrapper");
       checkNotNull(childHelperProvider, "childHelperProvider");
       this.delegate = childHelperProvider.forTarget(childPolicyWrapper.getTarget());
+      this.listener = listener;
     }
 
     @Override
@@ -793,9 +827,10 @@ public final class AsyncCachingRlsClient {
     public void updateBalancingState(ConnectivityState newState, SubchannelPicker newPicker) {
       childPolicyWrapper.setPicker(newPicker);
       childPolicyWrapper.setConnectivityState(newState);
-      // super is doing the updateBalancingState
       super.updateBalancingState(newState, newPicker);
-      // TODO(creamsoup) when it becomes ready may refresh invalid backoffs
+      if (listener != null) {
+        listener.onStatusChanged(newState);
+      }
     }
 
     @Override
@@ -812,6 +847,10 @@ public final class AsyncCachingRlsClient {
       final Subchannel sc = super.createSubchannel(args);
       childPolicyWrapper.setSubchannel(sc);
       return super.createSubchannel(args);
+    }
+
+    interface ChildLbStatusListener {
+      void onStatusChanged(ConnectivityState newState);
     }
   }
 

@@ -46,9 +46,8 @@ final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
   public void updateBalancingState(
       @Nonnull ConnectivityState newState,
       @Nonnull SubchannelPicker unused) {
-    checkState(rlsPicker != null, "Must provide RlsPicker before update balancing state");
     ConnectivityState newAggState = updateLbState(target, newState);
-    rlsHelper.updateBalancingState(newAggState, rlsPicker);
+    super.updateBalancingState(newAggState, rlsPicker);
   }
 
   private ConnectivityState updateLbState(String target, ConnectivityState state) {

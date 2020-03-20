@@ -24,8 +24,10 @@ import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.rls.internal.AdaptiveThrottler;
 import io.grpc.rls.internal.AsyncCachingRlsClient;
+import io.grpc.rls.internal.AsyncCachingRlsClient.Builder;
 import io.grpc.rls.internal.ChildLbResolvedAddressFactory;
 import io.grpc.rls.internal.LbPolicyConfiguration;
+import io.grpc.rls.internal.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
 import java.util.concurrent.TimeUnit;
 
@@ -66,19 +68,22 @@ final class RlsLoadBalancer extends LoadBalancer {
         ChildLbResolvedAddressFactory childLbResolvedAddressFactory =
             new ChildLbResolvedAddressFactory(
                 resolvedAddresses.getAddresses(), resolvedAddresses.getAttributes());
-        routeLookupClient =
-            AsyncCachingRlsClient.newBuilder()
-                .setChildLbResolvedAddressesFactory(childLbResolvedAddressFactory)
-                .setChannel(rlsServerChannel)
-                .setMaxAgeNanos(TimeUnit.MILLISECONDS.toNanos(rlsConfig.getMaxAgeInMillis()))
-                .setStaleAgeNanos(TimeUnit.MILLISECONDS.toNanos(rlsConfig.getStaleAgeInMillis()))
-                .setCallTimeoutNanos(
-                    TimeUnit.MILLISECONDS.toNanos(rlsConfig.getLookupServiceTimeoutInMillis()))
-                .setMaxCacheSizeBytes(rlsConfig.getCacheSizeBytes())
-                .setThrottler(throttler)
-                .setHelper(helper)
-                .setLbPolicyConfig(lbPolicyConfiguration)
-                .build();
+        Builder rlsClientBuilder = AsyncCachingRlsClient.newBuilder()
+            .setChildLbResolvedAddressesFactory(childLbResolvedAddressFactory)
+            .setChannel(rlsServerChannel)
+            .setMaxAgeNanos(TimeUnit.MILLISECONDS.toNanos(rlsConfig.getMaxAgeInMillis()))
+            .setStaleAgeNanos(TimeUnit.MILLISECONDS.toNanos(rlsConfig.getStaleAgeInMillis()))
+            .setCallTimeoutNanos(
+                TimeUnit.MILLISECONDS.toNanos(rlsConfig.getLookupServiceTimeoutInMillis()))
+            .setMaxCacheSizeBytes(rlsConfig.getCacheSizeBytes())
+            .setThrottler(throttler)
+            .setHelper(helper)
+            .setLbPolicyConfig(lbPolicyConfiguration);
+        if (rlsConfig.getRequestProcessingStrategy()
+            == RequestProcessingStrategy.SYNC_LOOKUP_CLIENT_SEES_ERROR) {
+          rlsClientBuilder.refreshBackoffEntries();
+        }
+        routeLookupClient = rlsClientBuilder.build();
       }
       // TODO(creamsoup) update configs if necessary, for v1 implementation this is not required.
       this.lbPolicyConfiguration = lbPolicyConfiguration;
