@@ -365,6 +365,9 @@ public final class AsyncCachingRlsClient {
       this.request = checkNotNull(request, "request");
       this.pendingCall = pendingCall;
       this.backoffPolicy = backoffPolicy == null ? backoffProvider.get() : backoffPolicy;
+      lbPolicyConfig
+          .getLoadBalancingPolicy()
+          .addPendingRequest(request, this.backoffPolicy);
       pendingCall.addListener(new Runnable() {
         @Override
         public void run() {
@@ -393,6 +396,9 @@ public final class AsyncCachingRlsClient {
 
     private void transitionToData(RouteLookupResponse routeLookupResponse) {
       pendingCallCache.remove(request);
+      lbPolicyConfig
+          .getLoadBalancingPolicy()
+          .removePendingRequest(request);
       linkedHashLruCache.cache(request, new DataCacheEntry(request, routeLookupResponse));
     }
 

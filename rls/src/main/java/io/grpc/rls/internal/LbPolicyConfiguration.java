@@ -96,7 +96,7 @@ public final class LbPolicyConfiguration {
     private final Map<String, Object> effectiveRawChildPolicy;
     private final LoadBalancerProvider effectiveLbProvider;
     private final String childPolicyConfigTargetFieldName;
-    private final Map<String, PendingRlsRequest> pendingRequests = new HashMap<>();
+    private final Map<RouteLookupRequest, BackoffPolicy> pendingRequests = new HashMap<>();
 
     /** Constructor. */
     public ChildLoadBalancingPolicy(
@@ -170,6 +170,18 @@ public final class LbPolicyConfiguration {
               pendingRequests);
     }
 
+    public void addPendingRequest(RouteLookupRequest request, BackoffPolicy backoffPolicy) {
+      checkNotNull(request, "request");
+      checkNotNull(backoffPolicy, "backoffPolicy");
+      BackoffPolicy existing = pendingRequests.put(request, backoffPolicy);
+      checkState(existing == null, "This is a bug, can't have duplicated pending request");
+    }
+
+    public void removePendingRequest(RouteLookupRequest request) {
+      BackoffPolicy policy = pendingRequests.remove(request);
+      checkState(policy != null, "This is a bug?");
+    }
+
     @Override
     public String toString() {
       return MoreObjects.toStringHelper(this)
@@ -178,11 +190,6 @@ public final class LbPolicyConfiguration {
           .add("childPolicyConfigTargetFieldName", childPolicyConfigTargetFieldName)
           .add("pendingRequests", pendingRequests)
           .toString();
-    }
-
-    static final class PendingRlsRequest {
-      RouteLookupRequest request;
-      BackoffPolicy backoffPolicy;
     }
   }
 
@@ -208,7 +215,6 @@ public final class LbPolicyConfiguration {
     }
 
     static ChildPolicyWrapper createOrGet(String target) {
-      Collections.m
       ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(target);
       if (existing != null) {
         return existing.getObject();
