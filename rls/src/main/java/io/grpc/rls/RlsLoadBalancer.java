@@ -24,7 +24,6 @@ import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.rls.internal.AdaptiveThrottler;
 import io.grpc.rls.internal.AsyncCachingRlsClient;
-import io.grpc.rls.internal.AsyncCachingRlsClient.Builder;
 import io.grpc.rls.internal.ChildLbResolvedAddressFactory;
 import io.grpc.rls.internal.LbPolicyConfiguration;
 import io.grpc.rls.internal.RlsProtoData.RequestProcessingStrategy;
@@ -68,7 +67,7 @@ final class RlsLoadBalancer extends LoadBalancer {
         ChildLbResolvedAddressFactory childLbResolvedAddressFactory =
             new ChildLbResolvedAddressFactory(
                 resolvedAddresses.getAddresses(), resolvedAddresses.getAttributes());
-        Builder rlsClientBuilder = AsyncCachingRlsClient.newBuilder()
+        AsyncCachingRlsClient.Builder rlsClientBuilder = AsyncCachingRlsClient.newBuilder()
             .setChildLbResolvedAddressesFactory(childLbResolvedAddressFactory)
             .setChannel(rlsServerChannel)
             .setMaxAgeNanos(TimeUnit.MILLISECONDS.toNanos(rlsConfig.getMaxAgeInMillis()))

@@ -34,7 +34,6 @@ import io.grpc.Status;
 import io.grpc.internal.PickSubchannelArgsImpl;
 import io.grpc.rls.internal.AsyncCachingRlsClient.CachedResponse;
 import io.grpc.rls.internal.AsyncCachingRlsClient.ChildPolicyReportingHelper;
-import io.grpc.rls.internal.AsyncCachingRlsClient.ChildPolicyReportingHelper.ChildLbStatusListener;
 import io.grpc.rls.internal.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider;
 import io.grpc.rls.internal.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.internal.RlsProtoData.RequestProcessingStrategy;

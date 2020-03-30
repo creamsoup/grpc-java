@@ -62,10 +62,11 @@ public final class RlsLoadBalancerProvider extends LoadBalancerProvider {
     try {
       RouteLookupConfig routeLookupConfig = new RouteLookupConfigConverter()
           .convert(JsonUtil.getObject(rawLoadBalancingConfigPolicy, "routeLookupConfig"));
-      ChildLoadBalancingPolicy lbPolicy = new ChildLoadBalancingPolicy(
-          JsonUtil.getString(rawLoadBalancingConfigPolicy, "childPolicyConfigTargetFieldName"),
-          JsonUtil.checkObjectList(
-              checkNotNull(JsonUtil.getList(rawLoadBalancingConfigPolicy, "childPolicy"))));
+      ChildLoadBalancingPolicy lbPolicy = ChildLoadBalancingPolicy
+          .create(
+              JsonUtil.getString(rawLoadBalancingConfigPolicy, "childPolicyConfigTargetFieldName"),
+              JsonUtil.checkObjectList(
+                  checkNotNull(JsonUtil.getList(rawLoadBalancingConfigPolicy, "childPolicy"))));
       // Checking all valid targets to make sure the config is always valid. This strict check
       // prevents child policy to handle invalid child policy.
       for (String validTarget : routeLookupConfig.getValidTargets()) {

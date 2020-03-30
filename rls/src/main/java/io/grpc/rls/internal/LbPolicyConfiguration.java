@@ -16,9 +16,11 @@
 
 package io.grpc.rls.internal;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.Iterables;
 import io.grpc.ConnectivityState;
@@ -40,16 +42,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
+import javax.annotation.Nullable;
 
 /**
- * LbPolicyConfiguration is a configuration for RLS load balancer.
+ * Configuration for RLS load balancing policy.
  */
 public final class LbPolicyConfiguration {
 
   private final RouteLookupConfig routeLookupConfig;
   private final ChildLoadBalancingPolicy policy;
 
-  /** Constructor. */
   public LbPolicyConfiguration(
       RouteLookupConfig routeLookupConfig, ChildLoadBalancingPolicy policy) {
     this.routeLookupConfig = checkNotNull(routeLookupConfig, "routeLookupConfig");
@@ -98,14 +100,25 @@ public final class LbPolicyConfiguration {
     private final String childPolicyConfigTargetFieldName;
     private final Map<RouteLookupRequest, BackoffPolicy> pendingRequests = new HashMap<>();
 
-    /** Constructor. */
-    public ChildLoadBalancingPolicy(
+    @VisibleForTesting
+    ChildLoadBalancingPolicy(
         String childPolicyConfigTargetFieldName,
-        List<Map<String, ?>> childPolicies) {
-      checkState(
+        Map<String, Object> effectiveRawChildPolicy,
+        LoadBalancerProvider effectiveLbProvider) {
+      checkArgument(
           childPolicyConfigTargetFieldName != null && !childPolicyConfigTargetFieldName.isEmpty(),
           "childPolicyConfigTargetFieldName cannot be empty or null");
       this.childPolicyConfigTargetFieldName = childPolicyConfigTargetFieldName;
+      this.effectiveRawChildPolicy =
+          checkNotNull(effectiveRawChildPolicy, "effectiveRawChildPolicy");
+      this.effectiveLbProvider = checkNotNull(effectiveLbProvider, "effectiveRawChildPolicy");
+    }
+
+    /** Creates ChildLoadBalancingPolicy. */
+    @SuppressWarnings("unchecked")
+    public static ChildLoadBalancingPolicy create(
+        String childPolicyConfigTargetFieldName,
+        List<Map<String, ?>> childPolicies) {
       Map<String, Object> effectiveChildPolicy = null;
       LoadBalancerProvider effectiveLbProvider = null;
       List<String> policyTried = new ArrayList<>();
@@ -127,25 +140,35 @@ public final class LbPolicyConfiguration {
       checkState(
           effectiveChildPolicy != null,
           "no valid childPolicy found, policy tried: %s", policyTried);
-      this.effectiveRawChildPolicy = effectiveChildPolicy;
-      this.effectiveLbProvider = effectiveLbProvider;
+      checkArgument(effectiveChildPolicy.size() == 1, "??");
+      return
+          new ChildLoadBalancingPolicy(
+              childPolicyConfigTargetFieldName,
+              (Map<String, Object>) effectiveChildPolicy.values().iterator().next(),
+              effectiveLbProvider);
     }
 
     /** Creates a load balancer config for given target. */
-    @SuppressWarnings("unchecked")
     public Map<String, ?> getEffectiveChildPolicy(String target) {
-      checkState(
-          effectiveRawChildPolicy.size() == 1, "child policy must have only 1 policy specified");
-      Map.Entry<String, Object> childPolicyEntry =
-          effectiveRawChildPolicy.entrySet().iterator().next();
-      Map<String, Object> childPolicy =
-          new HashMap<>((Map<String, Object>) childPolicyEntry.getValue());
+      Map<String, Object> childPolicy = new HashMap<>(effectiveRawChildPolicy);
       childPolicy.put(childPolicyConfigTargetFieldName, target);
       return childPolicy;
     }
 
     public LoadBalancerProvider getEffectiveLbProvider() {
       return effectiveLbProvider;
+    }
+
+    void addPendingRequest(RouteLookupRequest request, BackoffPolicy backoffPolicy) {
+      checkNotNull(request, "request");
+      checkNotNull(backoffPolicy, "backoffPolicy");
+      BackoffPolicy existing = pendingRequests.put(request, backoffPolicy);
+      checkState(existing == null, "This is a bug, can't have duplicated pending request");
+    }
+
+    void removePendingRequest(RouteLookupRequest request) {
+      BackoffPolicy policy = pendingRequests.remove(request);
+      checkState(policy != null, "This is a bug?");
     }
 
     @Override
@@ -165,21 +188,13 @@ public final class LbPolicyConfiguration {
 
     @Override
     public int hashCode() {
-      return Objects
-          .hash(effectiveRawChildPolicy, effectiveLbProvider, childPolicyConfigTargetFieldName,
-              pendingRequests);
-    }
-
-    public void addPendingRequest(RouteLookupRequest request, BackoffPolicy backoffPolicy) {
-      checkNotNull(request, "request");
-      checkNotNull(backoffPolicy, "backoffPolicy");
-      BackoffPolicy existing = pendingRequests.put(request, backoffPolicy);
-      checkState(existing == null, "This is a bug, can't have duplicated pending request");
-    }
-
-    public void removePendingRequest(RouteLookupRequest request) {
-      BackoffPolicy policy = pendingRequests.remove(request);
-      checkState(policy != null, "This is a bug?");
+      return
+          Objects
+              .hash(
+                  effectiveRawChildPolicy,
+                  effectiveLbProvider,
+                  childPolicyConfigTargetFieldName,
+                  pendingRequests);
     }
 
     @Override
@@ -199,6 +214,7 @@ public final class LbPolicyConfiguration {
    */
   static final class ChildPolicyWrapper implements Closeable {
 
+    @VisibleForTesting
     static final Map<String /* target */, RefCountedObjectPool<ChildPolicyWrapper>>
         childPolicyMap = new HashMap<>();
 
@@ -223,7 +239,7 @@ public final class LbPolicyConfiguration {
       RefCountedObjectPool<ChildPolicyWrapper> wrapper =
           RefCountedObjectPool.of(childPolicyWrapper);
       childPolicyMap.put(target, wrapper);
-      return wrapper.getObject();
+      return childPolicyWrapper;
     }
 
     String getTarget() {
@@ -276,8 +292,10 @@ public final class LbPolicyConfiguration {
 
     void release() {
       ObjectPool<ChildPolicyWrapper> existing = childPolicyMap.get(target);
-      checkState(existing != null, "doesn't exists!");
-      existing.returnObject(this);
+      checkState(existing != null, "Cannot access already released object");
+      if (existing.returnObject(this) == null) {
+        childPolicyMap.remove(target);
+      }
     }
 
     @Override
@@ -294,18 +312,19 @@ public final class LbPolicyConfiguration {
       if (o == null || getClass() != o.getClass()) {
         return false;
       }
-      ChildPolicyWrapper wrapper = (ChildPolicyWrapper) o;
-      return Objects.equals(target, wrapper.target)
-          && Objects.equals(childPolicy, wrapper.childPolicy)
-          && Objects.equals(lb, wrapper.lb)
-          && Objects.equals(subchannel, wrapper.subchannel)
-          && connectivityState == wrapper.connectivityState
-          && Objects.equals(picker, wrapper.picker);
+      ChildPolicyWrapper that = (ChildPolicyWrapper) o;
+      return Objects.equals(target, that.target)
+          && Objects.equals(childPolicy, that.childPolicy)
+          && Objects.equals(lb, that.lb)
+          && Objects.equals(subchannel, that.subchannel)
+          && connectivityState == that.connectivityState
+          && Objects.equals(picker, that.picker)
+          && Objects.equals(helper, that.helper);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hash(target, childPolicy, lb, subchannel, connectivityState, picker);
+      return Objects.hash(target, childPolicy, lb, subchannel, connectivityState, picker, helper);
     }
 
     @Override
@@ -317,6 +336,7 @@ public final class LbPolicyConfiguration {
           .add("subchannel", subchannel)
           .add("connectivityState", connectivityState)
           .add("picker", picker)
+          .add("helper", helper)
           .toString();
     }
   }
@@ -334,22 +354,23 @@ public final class LbPolicyConfiguration {
     public T getObject() {
       long curr = refCnt.getAndIncrement();
       if (curr <= 0) {
-        throw new IllegalStateException("already released");
+        throw new IllegalStateException("Cannot access already released object");
       }
       return object;
     }
 
     @Override
+    @Nullable
     public T returnObject(Object object) {
-      checkState(this.object == object, "returned wrong object");
+      checkState(this.object == object, "returned object doesn't match wrong object");
       long newCnt = refCnt.decrementAndGet();
       if (newCnt == 0) {
         try {
           this.object.close();
         } catch (IOException e) {
-          throw new RuntimeException("error during close", e);
+          throw new RuntimeException("Exception during close", e);
         }
-        return null;
+        this.object = null;
       }
       return this.object;
     }
@@ -362,6 +383,7 @@ public final class LbPolicyConfiguration {
     public String toString() {
       return MoreObjects.toStringHelper(this)
           .add("object", object)
+          .add("refCnt", refCnt.get())
           .toString();
     }
   }

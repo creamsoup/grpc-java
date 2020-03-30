@@ -17,7 +17,6 @@
 package io.grpc.rls.internal;
 
 import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.base.Preconditions.checkState;
 
 import io.grpc.ConnectivityState;
 import io.grpc.LoadBalancer.Helper;
@@ -25,6 +24,9 @@ import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.util.ForwardingLoadBalancerHelper;
 import javax.annotation.Nonnull;
 
+/**
+ * A delegating {@link Helper} notifies {@link RlsPicker} when lb status is changed.
+ */
 final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
 
   private final Helper rlsHelper;
