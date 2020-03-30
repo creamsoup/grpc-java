@@ -131,9 +131,12 @@ public final class AsyncCachingRlsClient {
     this.childLbResolvedAddressFactory =
         checkNotNull(builder.childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
     this.backoffProvider = builder.backoffProvider;
+    RlsPicker rlsPicker =
+        new RlsPicker(lbPolicyConfig, this, helper,
+        childLbResolvedAddressFactory);
     this.childLbHelperProvider =
         new ChildLoadBalancerHelperProvider(
-            helper, new RlsPicker(lbPolicyConfig, this, helper, childLbResolvedAddressFactory));
+            helper, rlsPicker.getSubchannelStateManager(), rlsPicker);
     if (builder.refreshBackoffEntries) {
       childLbStatusListener = new ChildLbStatusListener() {
         ConnectivityState prevState = null;

@@ -31,12 +31,18 @@ final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
 
   private final Helper rlsHelper;
   private final String target;
-  private final RlsPicker rlsPicker;
+  private final SubchannelStateManager subchannelStateManager;
+  private final SubchannelPicker picker;
 
-  private ChildLoadBalancerHelper(String target, Helper rlsHelper, RlsPicker rlsPicker) {
+  private ChildLoadBalancerHelper(
+      String target,
+      Helper rlsHelper,
+      SubchannelStateManager subchannelStateManager,
+      SubchannelPicker picker) {
     this.target = checkNotNull(target, "target");
     this.rlsHelper = checkNotNull(rlsHelper, "rlsHelper");
-    this.rlsPicker = checkNotNull(rlsPicker, "rlsPicker");
+    this.subchannelStateManager = checkNotNull(subchannelStateManager, "subchannelStateManager");
+    this.picker = checkNotNull(picker, "picker");
   }
 
   @Override
@@ -49,25 +55,28 @@ final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
       @Nonnull ConnectivityState newState,
       @Nonnull SubchannelPicker unused) {
     ConnectivityState newAggState = updateLbState(target, newState);
-    super.updateBalancingState(newAggState, rlsPicker);
+    super.updateBalancingState(newAggState, picker);
   }
 
   private ConnectivityState updateLbState(String target, ConnectivityState state) {
-    rlsPicker.getSubchannelStateManager().registerNewState(target, state);
-    return rlsPicker.getSubchannelStateManager().getAggregatedState();
+    subchannelStateManager.registerNewState(target, state);
+    return subchannelStateManager.getAggregatedState();
   }
 
   static final class ChildLoadBalancerHelperProvider {
     private final Helper helper;
-    private final RlsPicker rlsPicker;
+    private final SubchannelStateManager subchannelStateManager;
+    private final SubchannelPicker picker;
 
-    public ChildLoadBalancerHelperProvider(Helper helper, RlsPicker rlsPicker) {
-      this.helper = helper;
-      this.rlsPicker = rlsPicker;
+    public ChildLoadBalancerHelperProvider(
+        Helper helper, SubchannelStateManager subchannelStateManager, SubchannelPicker picker) {
+      this.helper = checkNotNull(helper, "helper");
+      this.subchannelStateManager = checkNotNull(subchannelStateManager, "subchannelStateManager");
+      this.picker = checkNotNull(picker, "picker");
     }
 
     public ChildLoadBalancerHelper forTarget(String target) {
-      return new ChildLoadBalancerHelper(target, helper, rlsPicker);
+      return new ChildLoadBalancerHelper(target, helper, subchannelStateManager, picker);
     }
   }
 }

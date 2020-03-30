@@ -16,11 +16,6 @@
 
 package io.grpc.rls.internal;
 
-import static com.google.common.base.Preconditions.checkNotNull;
-
-import com.google.common.base.MoreObjects;
-import com.google.common.collect.ConcurrentHashMultiset;
-import com.google.common.collect.Multiset;
 import io.grpc.ConnectivityState;
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.Helper;
@@ -38,7 +33,6 @@ import io.grpc.rls.internal.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvi
 import io.grpc.rls.internal.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.internal.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupRequest;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.Nullable;
@@ -49,6 +43,7 @@ final class RlsPicker extends SubchannelPicker {
   public static final Metadata.Key<String> RLS_DATA_KEY =
       Metadata.Key.of("X-Google-RLS-Data", Metadata.ASCII_STRING_MARSHALLER);
 
+  private final SubchannelStateManager subchannelStateManager = new SubchannelStateManagerImpl();
   private final ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
   private final ChildLoadBalancerHelperProvider childLbHelperProvider;
   private LbPolicyConfiguration lbPolicyConfiguration;
@@ -60,7 +55,6 @@ final class RlsPicker extends SubchannelPicker {
   private Helper helper;
   private RequestProcessingStrategy strategy;
 
-  private RlsSubchannelStateManager subchannelStateManager = new RlsSubchannelStateManager();
 
   RlsPicker(
       LbPolicyConfiguration lbPolicyConfiguration,
@@ -74,11 +68,8 @@ final class RlsPicker extends SubchannelPicker {
     this.strategy = lbPolicyConfiguration.getRouteLookupConfig().getRequestProcessingStrategy();
     this.childLbResolvedAddressFactory = childLbResolvedAddressFactory;
     helper.updateBalancingState(ConnectivityState.CONNECTING, this);
-    this.childLbHelperProvider = new ChildLoadBalancerHelperProvider(helper, this);
-  }
-
-  RlsSubchannelStateManager getSubchannelStateManager() {
-    return subchannelStateManager;
+    this.childLbHelperProvider =
+        new ChildLoadBalancerHelperProvider(helper, subchannelStateManager, this);
   }
 
   @Override
@@ -216,47 +207,7 @@ final class RlsPicker extends SubchannelPicker {
     return readyLatch;
   }
 
-  static final class RlsSubchannelStateManager {
-    ConcurrentHashMap<String, ConnectivityState> stateMap = new ConcurrentHashMap<>();
-    Multiset<ConnectivityState> stateMultiset = ConcurrentHashMultiset.create();
-
-    void registerNewState(String name, ConnectivityState newState) {
-      ConnectivityState existing;
-      if (newState == ConnectivityState.SHUTDOWN) {
-        existing = stateMap.remove(name);
-      } else {
-        existing = stateMap.put(checkNotNull(name, "name"), checkNotNull(newState, "newState"));
-        stateMultiset.add(newState);
-      }
-      if (existing != null) {
-        stateMultiset.remove(existing);
-      }
-    }
-
-    @Nullable
-    ConnectivityState getState(String name) {
-      return stateMap.get(checkNotNull(name, "name"));
-    }
-
-    ConnectivityState getAggregatedState() {
-      if (stateMultiset.contains(ConnectivityState.READY)) {
-        return ConnectivityState.READY;
-      } else if (stateMultiset.contains(ConnectivityState.CONNECTING)) {
-        return ConnectivityState.CONNECTING;
-      } else if (stateMultiset.contains(ConnectivityState.IDLE)) {
-        return ConnectivityState.IDLE;
-      } else if (stateMultiset.contains(ConnectivityState.TRANSIENT_FAILURE)) {
-        return ConnectivityState.TRANSIENT_FAILURE;
-      }
-      // empty or shutdown
-      return ConnectivityState.IDLE;
-    }
-
-    @Override
-    public String toString() {
-      return MoreObjects.toStringHelper(this)
-          .add("stateMap", stateMap)
-          .toString();
-    }
+  SubchannelStateManager getSubchannelStateManager() {
+    return subchannelStateManager;
   }
 }
