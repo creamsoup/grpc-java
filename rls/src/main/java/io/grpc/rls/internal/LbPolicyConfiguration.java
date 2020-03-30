@@ -24,6 +24,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.Iterables;
 import io.grpc.ConnectivityState;
+import io.grpc.ConnectivityStateInfo;
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
@@ -219,10 +220,12 @@ public final class LbPolicyConfiguration {
         childPolicyMap = new HashMap<>();
 
     private final String target;
+    @Nullable
     private ChildLoadBalancingPolicy childPolicy;
     private LoadBalancer lb;
     private Subchannel subchannel;
-    private ConnectivityState connectivityState = ConnectivityState.IDLE;
+    private ConnectivityStateInfo connectivityStateInfo =
+        ConnectivityStateInfo.forNonError(ConnectivityState.IDLE);
     private SubchannelPicker picker;
     private ChildLoadBalancerHelper helper;
 
@@ -254,8 +257,8 @@ public final class LbPolicyConfiguration {
       this.childPolicy = childPolicy;
     }
 
-    ConnectivityState getConnectivityState() {
-      return connectivityState;
+    ConnectivityStateInfo getConnectivityStateInfo() {
+      return connectivityStateInfo;
     }
 
     void setSubchannel(Subchannel subchannel) {
@@ -286,8 +289,8 @@ public final class LbPolicyConfiguration {
       return helper;
     }
 
-    void setConnectivityState(ConnectivityState connectivityState) {
-      this.connectivityState = connectivityState;
+    void setConnectivityStateInfo(ConnectivityStateInfo connectivityStateInfo) {
+      this.connectivityStateInfo = connectivityStateInfo;
     }
 
     void release() {
@@ -301,7 +304,6 @@ public final class LbPolicyConfiguration {
     @Override
     public void close() {
       childPolicy = null;
-      connectivityState = null;
     }
 
     @Override
@@ -317,14 +319,15 @@ public final class LbPolicyConfiguration {
           && Objects.equals(childPolicy, that.childPolicy)
           && Objects.equals(lb, that.lb)
           && Objects.equals(subchannel, that.subchannel)
-          && connectivityState == that.connectivityState
+          && Objects.equals(connectivityStateInfo, that.connectivityStateInfo)
           && Objects.equals(picker, that.picker)
           && Objects.equals(helper, that.helper);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hash(target, childPolicy, lb, subchannel, connectivityState, picker, helper);
+      return
+          Objects.hash(target, childPolicy, lb, subchannel, connectivityStateInfo, picker, helper);
     }
 
     @Override
@@ -334,7 +337,7 @@ public final class LbPolicyConfiguration {
           .add("childPolicy", childPolicy)
           .add("lb", lb)
           .add("subchannel", subchannel)
-          .add("connectivityState", connectivityState)
+          .add("connectivityStateInfo", connectivityStateInfo)
           .add("picker", picker)
           .add("helper", helper)
           .toString();

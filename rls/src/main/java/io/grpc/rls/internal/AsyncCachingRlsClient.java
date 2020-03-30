@@ -25,6 +25,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import io.grpc.Attributes;
 import io.grpc.ConnectivityState;
+import io.grpc.ConnectivityStateInfo;
 import io.grpc.EquivalentAddressGroup;
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.CreateSubchannelArgs;
@@ -472,7 +473,8 @@ public final class AsyncCachingRlsClient {
         childPolicyWrapper
             .getHelper()
             .updateBalancingState(
-                childPolicyWrapper.getConnectivityState(), childPolicyWrapper.getPicker());
+                childPolicyWrapper.getConnectivityStateInfo().getState(),
+                childPolicyWrapper.getPicker());
       } else {
         childPolicyWrapper.setChildPolicy(lbPolicyConfig.getLoadBalancingPolicy());
         LoadBalancerProvider lbProvider = childPolicyWrapper
@@ -835,7 +837,7 @@ public final class AsyncCachingRlsClient {
     @Override
     public void updateBalancingState(ConnectivityState newState, SubchannelPicker newPicker) {
       childPolicyWrapper.setPicker(newPicker);
-      childPolicyWrapper.setConnectivityState(newState);
+      childPolicyWrapper.setConnectivityStateInfo(ConnectivityStateInfo.forNonError(newState));
       super.updateBalancingState(newState, newPicker);
       if (listener != null) {
         listener.onStatusChanged(newState);
