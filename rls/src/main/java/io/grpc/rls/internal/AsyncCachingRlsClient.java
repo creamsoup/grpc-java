@@ -172,23 +172,17 @@ public final class AsyncCachingRlsClient {
       return response;
     }
     io.grpc.lookup.v1.RouteLookupRequest rlsRequest = reqConverter.convert(request);
-    System.out.println("time: " + System.currentTimeMillis());
-    System.out.println("channel status: " + channel.getState(false));
     stub.withDeadlineAfter(callTimeoutNanos, TimeUnit.NANOSECONDS)
         .routeLookup(
             rlsRequest,
             new StreamObserver<io.grpc.lookup.v1.RouteLookupResponse>() {
               @Override
               public void onNext(io.grpc.lookup.v1.RouteLookupResponse value) {
-                System.out.println("woohoo: " + value);
                 response.set(respConverter.reverse().convert(value));
               }
 
               @Override
               public void onError(Throwable t) {
-                // todo removeme
-                new RuntimeException("oops " + System.currentTimeMillis(), t)
-                    .printStackTrace(System.out);
                 response.setException(t);
                 throttler.registerBackendResponse(false);
               }
@@ -440,12 +434,6 @@ public final class AsyncCachingRlsClient {
 
     abstract boolean isExpired(long now);
 
-    boolean isStaled() {
-      return isStaled(timeProvider.currentTimeNanos());
-    }
-
-    abstract boolean isStaled(long now);
-
     abstract void cleanup();
   }
 
@@ -556,7 +544,6 @@ public final class AsyncCachingRlsClient {
       return expireTime <= now;
     }
 
-    @Override
     boolean isStaled(long now) {
       return staleTime <= now;
     }
@@ -651,11 +638,6 @@ public final class AsyncCachingRlsClient {
     @Override
     boolean isExpired(long now) {
       return expireMills <= now;
-    }
-
-    @Override
-    boolean isStaled(long now) {
-      return isExpired(now);
     }
 
     @Override

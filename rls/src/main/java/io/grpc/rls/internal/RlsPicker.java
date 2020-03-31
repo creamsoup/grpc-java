@@ -175,11 +175,11 @@ final class RlsPicker extends SubchannelPicker {
   }
 
   private CountDownLatch startFallbackChildPolicy() {
-    final String defaultTarget = lbPolicyConfiguration.getRouteLookupConfig().getDefaultTarget();
+    String defaultTarget = lbPolicyConfiguration.getRouteLookupConfig().getDefaultTarget();
     fallbackChildPolicyWrapper = ChildPolicyWrapper.createOrGet(defaultTarget);
     final CountDownLatch readyLatch = new CountDownLatch(1);
 
-    final LoadBalancerProvider lbProvider =
+    LoadBalancerProvider lbProvider =
         lbPolicyConfiguration.getLoadBalancingPolicy().getEffectiveLbProvider();
     ChildPolicyReportingHelper childPolicyReportingHelper =
         new ChildPolicyReportingHelper(childLbHelperProvider, fallbackChildPolicyWrapper, null);
