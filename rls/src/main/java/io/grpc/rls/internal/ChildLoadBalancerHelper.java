@@ -25,7 +25,9 @@ import io.grpc.util.ForwardingLoadBalancerHelper;
 import javax.annotation.Nonnull;
 
 /**
- * A delegating {@link Helper} notifies {@link RlsPicker} when lb status is changed.
+ * A delegating {@link Helper} for the child load blanacer. The child load-balancer notifies the
+ * higher level load-blancer with aggregated status instead of each individual child load-blanacer's
+ * state.
  */
 final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
 
@@ -50,6 +52,11 @@ final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
     return rlsHelper;
   }
 
+  /**
+   * Updates balancing state from one or more subchannels tracked in the {@link
+   * SubchannelStateManager}. The passed picker will be ignored, instead the picker which governs
+   * many subchannels/pickers will be reported to the higher load-balancer.
+   */
   @Override
   public void updateBalancingState(
       @Nonnull ConnectivityState newState,

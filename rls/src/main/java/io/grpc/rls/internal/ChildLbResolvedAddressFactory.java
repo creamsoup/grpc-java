@@ -39,9 +39,7 @@ public final class ChildLbResolvedAddressFactory {
     this.attributes = checkNotNull(attributes, "attributes");
   }
 
-  /**
-   * Creates {@link ResolvedAddresses} with given child lb config.
-   */
+  /** Creates {@link ResolvedAddresses} with given child lb config. */
   public ResolvedAddresses create(Object childLbConfig) {
     return ResolvedAddresses.newBuilder()
         .setAddresses(addresses)

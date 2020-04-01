@@ -32,7 +32,7 @@ import org.junit.runners.JUnit4;
 public class ChildLoadBalancerHelperTest {
 
   private Helper helper = mock(Helper.class);
-  private SubchannelStateManager subchannelStateManager = mock(SubchannelStateManager.class);
+  private SubchannelStateManager subchannelStateManager = new SubchannelStateManagerImpl();
   private SubchannelPicker picker = mock(SubchannelPicker.class);
 
   private ChildLoadBalancerHelperProvider provider =
@@ -40,13 +40,20 @@ public class ChildLoadBalancerHelperTest {
 
   @Test
   public void childLoadBalancerHelper_shouldReportsSubchannelState() {
-    ChildLoadBalancerHelper childLbHelper = provider.forTarget("foo.bar.com");
-    when(subchannelStateManager.getAggregatedState()).thenReturn(ConnectivityState.READY);
-
-    childLbHelper.updateBalancingState(ConnectivityState.READY, mock(SubchannelPicker.class));
-
-    // should use picker from the provider
+    ChildLoadBalancerHelper childLbHelper1 = provider.forTarget("foo.com");
+    SubchannelPicker picker1 = mock(SubchannelPicker.class);
+    childLbHelper1.updateBalancingState(ConnectivityState.READY, picker1);
     verify(helper).updateBalancingState(ConnectivityState.READY, picker);
-    verify(subchannelStateManager).updateState("foo.bar.com", ConnectivityState.READY);
+
+    ChildLoadBalancerHelper childLbHelper2 = provider.forTarget("bar.com");
+    SubchannelPicker picker2 = mock(SubchannelPicker.class);
+    childLbHelper2.updateBalancingState(ConnectivityState.TRANSIENT_FAILURE, picker2);
+    verify(helper).updateBalancingState(ConnectivityState.READY, picker);
+
+    childLbHelper1.updateBalancingState(ConnectivityState.SHUTDOWN, picker1);
+    verify(helper).updateBalancingState(ConnectivityState.TRANSIENT_FAILURE, picker);
+
+    childLbHelper2.updateBalancingState(ConnectivityState.CONNECTING, picker1);
+    verify(helper).updateBalancingState(ConnectivityState.CONNECTING, picker);
   }
 }

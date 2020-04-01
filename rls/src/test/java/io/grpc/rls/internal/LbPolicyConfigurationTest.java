@@ -39,6 +39,7 @@ public class LbPolicyConfigurationTest {
 
     ChildPolicyWrapper childPolicy2 = ChildPolicyWrapper.createOrGet(target);
     assertThat(ChildPolicyWrapper.childPolicyMap.keySet()).containsExactly(target);
+    assertThat(childPolicy2).isEqualTo(childPolicy);
 
     childPolicy2.release();
     assertThat(ChildPolicyWrapper.childPolicyMap.keySet()).containsExactly(target);
