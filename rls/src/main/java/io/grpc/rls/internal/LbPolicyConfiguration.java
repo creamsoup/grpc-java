@@ -256,10 +256,6 @@ public final class LbPolicyConfiguration {
       this.childPolicy = childPolicy;
     }
 
-    ConnectivityStateInfo getConnectivityStateInfo() {
-      return connectivityStateInfo;
-    }
-
     void setPicker(SubchannelPicker picker) {
       this.picker = checkNotNull(picker, "picker");
     }
@@ -278,6 +274,10 @@ public final class LbPolicyConfiguration {
 
     void setConnectivityStateInfo(ConnectivityStateInfo connectivityStateInfo) {
       this.connectivityStateInfo = connectivityStateInfo;
+    }
+
+    ConnectivityStateInfo getConnectivityStateInfo() {
+      return connectivityStateInfo;
     }
 
     void release() {
@@ -306,13 +306,11 @@ public final class LbPolicyConfiguration {
           && Objects.equals(childPolicy, that.childPolicy)
           && Objects.equals(connectivityStateInfo, that.connectivityStateInfo)
           && Objects.equals(picker, that.picker);
-//          && Objects.equals(helper, that.helper);
     }
 
     @Override
     public int hashCode() {
-      return
-          Objects.hash(target, childPolicy, connectivityStateInfo, picker);//, helper);
+      return Objects.hash(target, childPolicy, connectivityStateInfo, picker);
     }
 
     @Override
@@ -322,7 +320,6 @@ public final class LbPolicyConfiguration {
           .add("childPolicy", childPolicy)
           .add("connectivityStateInfo", connectivityStateInfo)
           .add("picker", picker)
-//          .add("helper", helper)
           .toString();
     }
   }
@@ -358,7 +355,7 @@ public final class LbPolicyConfiguration {
         childPolicyWrapper.close();
         childPolicyWrapper = null;
       }
-      return this.childPolicyWrapper;
+      return childPolicyWrapper;
     }
 
     static RefCountedChildPolicyWrapper of(ChildPolicyWrapper childPolicyWrapper) {
