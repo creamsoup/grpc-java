@@ -192,7 +192,6 @@ final class RlsPicker extends SubchannelPicker {
                     .getLoadBalancingPolicy()
                     .getEffectiveChildPolicy(defaultTarget));
     fallbackChildPolicyWrapper.setChildPolicy(lbPolicyConfiguration.getLoadBalancingPolicy());
-    fallbackChildPolicyWrapper.setLoadBalancer(lb);
     helper.getSynchronizationContext().execute(
         new Runnable() {
           @Override

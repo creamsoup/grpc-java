@@ -59,7 +59,7 @@ final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
   }
 
   private ConnectivityState updateLbState(String target, ConnectivityState state) {
-    subchannelStateManager.registerNewState(target, state);
+    subchannelStateManager.updateState(target, state);
     return subchannelStateManager.getAggregatedState();
   }
 

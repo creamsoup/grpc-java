@@ -25,8 +25,7 @@ import com.google.common.base.MoreObjects;
 import com.google.common.collect.Iterables;
 import io.grpc.ConnectivityState;
 import io.grpc.ConnectivityStateInfo;
-import io.grpc.LoadBalancer;
-import io.grpc.LoadBalancer.Subchannel;
+import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.LoadBalancerRegistry;
@@ -35,7 +34,6 @@ import io.grpc.internal.ObjectPool;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupRequest;
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -112,7 +110,7 @@ public final class LbPolicyConfiguration {
       this.childPolicyConfigTargetFieldName = childPolicyConfigTargetFieldName;
       this.effectiveRawChildPolicy =
           checkNotNull(effectiveRawChildPolicy, "effectiveRawChildPolicy");
-      this.effectiveLbProvider = checkNotNull(effectiveLbProvider, "effectiveRawChildPolicy");
+      this.effectiveLbProvider = checkNotNull(effectiveLbProvider, "effectiveLbProvider");
     }
 
     /** Creates ChildLoadBalancingPolicy. */
@@ -141,7 +139,9 @@ public final class LbPolicyConfiguration {
       checkState(
           effectiveChildPolicy != null,
           "no valid childPolicy found, policy tried: %s", policyTried);
-      checkArgument(effectiveChildPolicy.size() == 1, "??");
+      checkArgument(
+          effectiveChildPolicy.size() == 1,
+          "childPolicy should have exactly one loadbalancing policy");
       return
           new ChildLoadBalancingPolicy(
               childPolicyConfigTargetFieldName,
@@ -149,7 +149,7 @@ public final class LbPolicyConfiguration {
               effectiveLbProvider);
     }
 
-    /** Creates a load balancer config for given target. */
+    /** Creates a child load balancer config for given target. */
     public Map<String, ?> getEffectiveChildPolicy(String target) {
       Map<String, Object> childPolicy = new HashMap<>(effectiveRawChildPolicy);
       childPolicy.put(childPolicyConfigTargetFieldName, target);
@@ -164,12 +164,14 @@ public final class LbPolicyConfiguration {
       checkNotNull(request, "request");
       checkNotNull(backoffPolicy, "backoffPolicy");
       BackoffPolicy existing = pendingRequests.put(request, backoffPolicy);
-      checkState(existing == null, "This is a bug, can't have duplicated pending request");
+      checkState(
+          existing == null,
+          "This is a bug, there should be at most one outstanding pending request");
     }
 
     void removePendingRequest(RouteLookupRequest request) {
       BackoffPolicy policy = pendingRequests.remove(request);
-      checkState(policy != null, "This is a bug?");
+      checkState(policy != null, "This is a bug, untracked pending request found");
     }
 
     @Override
@@ -210,24 +212,22 @@ public final class LbPolicyConfiguration {
   }
 
   /**
-   * ChildPolicyWrapper is a wrapper class for child load balancer with additional information to
-   * keep track / manage / cache child policy.
+   * ChildPolicyWrapper is a wrapper class for child load balancing policy with associated helper /
+   * utility classes to manage the child policy.
    */
   static final class ChildPolicyWrapper implements Closeable {
 
     @VisibleForTesting
-    static final Map<String /* target */, RefCountedObjectPool<ChildPolicyWrapper>>
-        childPolicyMap = new HashMap<>();
+    static final Map<String /* target */, RefCountedChildPolicyWrapper> childPolicyMap =
+        new HashMap<>();
 
     private final String target;
     @Nullable
     private ChildLoadBalancingPolicy childPolicy;
-    private LoadBalancer lb;
-    private Subchannel subchannel;
     private ConnectivityStateInfo connectivityStateInfo =
         ConnectivityStateInfo.forNonError(ConnectivityState.IDLE);
     private SubchannelPicker picker;
-    private ChildLoadBalancerHelper helper;
+    private Helper helper;
 
     private ChildPolicyWrapper(String target) {
       this.target = target;
@@ -239,8 +239,7 @@ public final class LbPolicyConfiguration {
         return existing.getObject();
       }
       ChildPolicyWrapper childPolicyWrapper = new ChildPolicyWrapper(target);
-      RefCountedObjectPool<ChildPolicyWrapper> wrapper =
-          RefCountedObjectPool.of(childPolicyWrapper);
+      RefCountedChildPolicyWrapper wrapper = RefCountedChildPolicyWrapper.of(childPolicyWrapper);
       childPolicyMap.put(target, wrapper);
       return childPolicyWrapper;
     }
@@ -261,22 +260,6 @@ public final class LbPolicyConfiguration {
       return connectivityStateInfo;
     }
 
-    void setSubchannel(Subchannel subchannel) {
-      this.subchannel = subchannel;
-    }
-
-    Subchannel getSubchannel() {
-      return subchannel;
-    }
-
-    void setLoadBalancer(LoadBalancer lb) {
-      this.lb = lb;
-    }
-
-    LoadBalancer getLoadBalancer() {
-      return lb;
-    }
-
     void setPicker(SubchannelPicker picker) {
       this.picker = checkNotNull(picker, "picker");
     }
@@ -285,7 +268,11 @@ public final class LbPolicyConfiguration {
       return picker;
     }
 
-    public ChildLoadBalancerHelper getHelper() {
+    public void setHelper(Helper helper) {
+      this.helper = checkNotNull(helper, "helper");
+    }
+
+    public Helper getHelper() {
       return helper;
     }
 
@@ -317,17 +304,15 @@ public final class LbPolicyConfiguration {
       ChildPolicyWrapper that = (ChildPolicyWrapper) o;
       return Objects.equals(target, that.target)
           && Objects.equals(childPolicy, that.childPolicy)
-          && Objects.equals(lb, that.lb)
-          && Objects.equals(subchannel, that.subchannel)
           && Objects.equals(connectivityStateInfo, that.connectivityStateInfo)
-          && Objects.equals(picker, that.picker)
-          && Objects.equals(helper, that.helper);
+          && Objects.equals(picker, that.picker);
+//          && Objects.equals(helper, that.helper);
     }
 
     @Override
     public int hashCode() {
       return
-          Objects.hash(target, childPolicy, lb, subchannel, connectivityStateInfo, picker, helper);
+          Objects.hash(target, childPolicy, connectivityStateInfo, picker);//, helper);
     }
 
     @Override
@@ -335,57 +320,55 @@ public final class LbPolicyConfiguration {
       return MoreObjects.toStringHelper(this)
           .add("target", target)
           .add("childPolicy", childPolicy)
-          .add("lb", lb)
-          .add("subchannel", subchannel)
           .add("connectivityStateInfo", connectivityStateInfo)
           .add("picker", picker)
-          .add("helper", helper)
+//          .add("helper", helper)
           .toString();
     }
   }
 
-  private static final class RefCountedObjectPool<T extends Closeable> implements ObjectPool<T> {
+  private static final class RefCountedChildPolicyWrapper
+      implements ObjectPool<ChildPolicyWrapper> {
 
     private final AtomicLong refCnt = new AtomicLong(1);
-    private T object;
+    @Nullable
+    private ChildPolicyWrapper childPolicyWrapper;
 
-    private RefCountedObjectPool(T object) {
-      this.object = object;
+    private RefCountedChildPolicyWrapper(ChildPolicyWrapper childPolicyWrapper) {
+      this.childPolicyWrapper = checkNotNull(childPolicyWrapper, "childPolicyWrapper");
     }
 
     @Override
-    public T getObject() {
+    public ChildPolicyWrapper getObject() {
       long curr = refCnt.getAndIncrement();
       if (curr <= 0) {
-        throw new IllegalStateException("Cannot access already released object");
+        throw new IllegalStateException("ChildPolicyWrapper is already released");
       }
-      return object;
+      return childPolicyWrapper;
     }
 
     @Override
     @Nullable
-    public T returnObject(Object object) {
-      checkState(this.object == object, "returned object doesn't match wrong object");
+    public ChildPolicyWrapper returnObject(Object object) {
+      checkState(
+          childPolicyWrapper == object,
+          "returned object doesn't match the pooled childPolicyWrapper");
       long newCnt = refCnt.decrementAndGet();
       if (newCnt == 0) {
-        try {
-          this.object.close();
-        } catch (IOException e) {
-          throw new RuntimeException("Exception during close", e);
-        }
-        this.object = null;
+        childPolicyWrapper.close();
+        childPolicyWrapper = null;
       }
-      return this.object;
+      return this.childPolicyWrapper;
     }
 
-    static <T extends Closeable> RefCountedObjectPool<T> of(T t) {
-      return new RefCountedObjectPool<>(t);
+    static RefCountedChildPolicyWrapper of(ChildPolicyWrapper childPolicyWrapper) {
+      return new RefCountedChildPolicyWrapper(childPolicyWrapper);
     }
 
     @Override
     public String toString() {
       return MoreObjects.toStringHelper(this)
-          .add("object", object)
+          .add("object", childPolicyWrapper)
           .add("refCnt", refCnt.get())
           .toString();
     }

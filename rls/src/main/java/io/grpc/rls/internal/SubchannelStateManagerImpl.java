@@ -19,25 +19,27 @@ package io.grpc.rls.internal;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.common.base.MoreObjects;
-import com.google.common.collect.ConcurrentHashMultiset;
+import com.google.common.collect.HashMultiset;
 import com.google.common.collect.Multiset;
 import io.grpc.ConnectivityState;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.HashMap;
 import javax.annotation.Nullable;
 
 /** Implementation of {@link SubchannelStateManager}. */
 final class SubchannelStateManagerImpl implements SubchannelStateManager {
 
-  private final ConcurrentHashMap<String, ConnectivityState> stateMap = new ConcurrentHashMap<>();
-  private final Multiset<ConnectivityState> stateMultiset = ConcurrentHashMultiset.create();
+  private final HashMap<String, ConnectivityState> stateMap = new HashMap<>();
+  private final Multiset<ConnectivityState> stateMultiset = HashMultiset.create();
 
   @Override
-  public void registerNewState(String name, ConnectivityState newState) {
+  public void updateState(String name, ConnectivityState newState) {
+    checkNotNull(name, "name");
+    checkNotNull(newState, "newState");
     ConnectivityState existing;
     if (newState == ConnectivityState.SHUTDOWN) {
       existing = stateMap.remove(name);
     } else {
-      existing = stateMap.put(checkNotNull(name, "name"), checkNotNull(newState, "newState"));
+      existing = stateMap.put(name, newState);
       stateMultiset.add(newState);
     }
     if (existing != null) {

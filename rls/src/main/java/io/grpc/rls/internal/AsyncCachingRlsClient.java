@@ -471,16 +471,15 @@ public final class AsyncCachingRlsClient {
         ChildPolicyReportingHelper childPolicyReportingHelper =
             new ChildPolicyReportingHelper(
                 childLbHelperProvider, childPolicyWrapper, childLbStatusListener);
-
-        LoadBalancer lb =
-            lbProvider.newLoadBalancer(childPolicyReportingHelper);
-        childPolicyWrapper.setLoadBalancer(lb);
+        childPolicyWrapper.setHelper(childPolicyReportingHelper);
 
         ConfigOrError lbConfig = lbProvider
             .parseLoadBalancingPolicyConfig(
                 childPolicyWrapper.getChildPolicy().getEffectiveChildPolicy(response.getTarget()));
         ResolvedAddresses resolvedAddresses =
             childLbResolvedAddressFactory.create(lbConfig.getConfig());
+        LoadBalancer lb =
+            lbProvider.newLoadBalancer(childPolicyReportingHelper);
         lb.handleResolvedAddresses(resolvedAddresses);
         lb.requestConnection();
       }
@@ -837,8 +836,6 @@ public final class AsyncCachingRlsClient {
 
     @Override
     public Subchannel createSubchannel(CreateSubchannelArgs args) {
-      final Subchannel sc = super.createSubchannel(args);
-      childPolicyWrapper.setSubchannel(sc);
       return super.createSubchannel(args);
     }
 

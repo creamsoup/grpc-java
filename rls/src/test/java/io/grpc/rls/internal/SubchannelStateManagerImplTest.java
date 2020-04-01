@@ -35,7 +35,7 @@ public class SubchannelStateManagerImplTest {
 
   @Test
   public void getState_known() {
-    subchannelStateManager.registerNewState("known", ConnectivityState.TRANSIENT_FAILURE);
+    subchannelStateManager.updateState("known", ConnectivityState.TRANSIENT_FAILURE);
 
     assertThat(subchannelStateManager.getState("known"))
         .isEqualTo(ConnectivityState.TRANSIENT_FAILURE);
@@ -43,12 +43,12 @@ public class SubchannelStateManagerImplTest {
 
   @Test
   public void getState_shutdown_unregistersSubchannel() {
-    subchannelStateManager.registerNewState("known", ConnectivityState.TRANSIENT_FAILURE);
+    subchannelStateManager.updateState("known", ConnectivityState.TRANSIENT_FAILURE);
 
     assertThat(subchannelStateManager.getState("known"))
         .isEqualTo(ConnectivityState.TRANSIENT_FAILURE);
 
-    subchannelStateManager.registerNewState("known", ConnectivityState.SHUTDOWN);
+    subchannelStateManager.updateState("known", ConnectivityState.SHUTDOWN);
 
     assertThat(subchannelStateManager.getState("known")).isNull();
   }
@@ -67,7 +67,7 @@ public class SubchannelStateManagerImplTest {
       }
       SubchannelStateManager stateManager = new SubchannelStateManagerImpl();
 
-      stateManager.registerNewState("foo", value);
+      stateManager.updateState("foo", value);
 
       assertThat(stateManager.getAggregatedState()).isEqualTo(value);
     }
@@ -75,8 +75,8 @@ public class SubchannelStateManagerImplTest {
 
   @Test
   public void getAggregateState_multipleSubchannels() {
-    subchannelStateManager.registerNewState("channel1", ConnectivityState.TRANSIENT_FAILURE);
-    subchannelStateManager.registerNewState("channel2", ConnectivityState.READY);
+    subchannelStateManager.updateState("channel1", ConnectivityState.TRANSIENT_FAILURE);
+    subchannelStateManager.updateState("channel2", ConnectivityState.READY);
 
     assertThat(subchannelStateManager.getState("channel1"))
         .isEqualTo(ConnectivityState.TRANSIENT_FAILURE);
@@ -86,7 +86,7 @@ public class SubchannelStateManagerImplTest {
     assertThat(subchannelStateManager.getAggregatedState())
         .isEqualTo(ConnectivityState.READY);
 
-    subchannelStateManager.registerNewState("channel2", ConnectivityState.SHUTDOWN);
+    subchannelStateManager.updateState("channel2", ConnectivityState.SHUTDOWN);
 
     assertThat(subchannelStateManager.getAggregatedState())
         .isEqualTo(ConnectivityState.TRANSIENT_FAILURE);

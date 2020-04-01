@@ -47,6 +47,6 @@ public class ChildLoadBalancerHelperTest {
 
     // should use picker from the provider
     verify(helper).updateBalancingState(ConnectivityState.READY, picker);
-    verify(subchannelStateManager).registerNewState("foo.bar.com", ConnectivityState.READY);
+    verify(subchannelStateManager).updateState("foo.bar.com", ConnectivityState.READY);
   }
 }
