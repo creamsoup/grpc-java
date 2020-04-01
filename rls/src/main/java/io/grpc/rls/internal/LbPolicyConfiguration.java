@@ -149,13 +149,14 @@ public final class LbPolicyConfiguration {
               effectiveLbProvider);
     }
 
-    /** Creates a child load balancer config for given target. */
+    /** Creates a child load balancer config for given target from elected raw child policy. */
     public Map<String, ?> getEffectiveChildPolicy(String target) {
       Map<String, Object> childPolicy = new HashMap<>(effectiveRawChildPolicy);
       childPolicy.put(childPolicyConfigTargetFieldName, target);
       return childPolicy;
     }
 
+    /** Returns the elected child {@link LoadBalancerProvider}. */
     public LoadBalancerProvider getEffectiveLbProvider() {
       return effectiveLbProvider;
     }
@@ -264,11 +265,11 @@ public final class LbPolicyConfiguration {
       return picker;
     }
 
-    public void setHelper(Helper helper) {
+    void setHelper(Helper helper) {
       this.helper = checkNotNull(helper, "helper");
     }
 
-    public Helper getHelper() {
+    Helper getHelper() {
       return helper;
     }
 
