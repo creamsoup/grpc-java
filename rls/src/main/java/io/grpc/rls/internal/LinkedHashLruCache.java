@@ -28,6 +28,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -291,9 +292,17 @@ abstract class LinkedHashLruCache<K, V> implements LruCache<K, V> {
 
   @Override
   public final void close() {
-    //TODO maybe clear map/set?
-    periodicCleaner.stop();
-    doClose();
+    synchronized (lock) {
+      periodicCleaner.stop();
+      doClose();
+      // remove all and notify the listener
+      Iterator<Entry<K, SizedValue>> iter = delegate.entrySet().iterator();
+      while (iter.hasNext()) {
+        Entry<K, SizedValue> next = iter.next();
+        evictionListener.onEviction(next.getKey(), next.getValue(), EvictionType.EXPLICIT);
+        iter.remove();
+      }
+    }
   }
 
   protected void doClose() {}

@@ -146,10 +146,6 @@ public final class AsyncCachingRlsClient {
   @CheckReturnValue
   private ListenableFuture<RouteLookupResponse> asyncRlsCall(RouteLookupRequest request) {
     final SettableFuture<RouteLookupResponse> response = SettableFuture.create();
-    if (stub == null) {
-      response.setException(new RuntimeException("OobChannel is not ready yet"));
-      return response;
-    }
     if (throttler.shouldThrottle()) {
       response.setException(new ThrottledException());
       return response;
@@ -210,6 +206,7 @@ public final class AsyncCachingRlsClient {
   /** Performs any pending maintenance operations needed by the cache. */
   public void close() {
     synchronized (lock) {
+      // all childPolicyWrapper will be returned via AutoCleaningEvictionListener
       linkedHashLruCache.close();
     }
   }
