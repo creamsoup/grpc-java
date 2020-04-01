@@ -128,6 +128,7 @@ final class RlsPicker extends SubchannelPicker {
       case SYNC_LOOKUP_CLIENT_SEES_ERROR:
         return PickResult.withError(cause);
       case SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR:
+        cause.asException().printStackTrace();
         return useFallback(args);
       default:
         throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
@@ -182,7 +183,7 @@ final class RlsPicker extends SubchannelPicker {
     LoadBalancerProvider lbProvider =
         lbPolicyConfiguration.getLoadBalancingPolicy().getEffectiveLbProvider();
     ChildPolicyReportingHelper childPolicyReportingHelper =
-        new ChildPolicyReportingHelper(childLbHelperProvider, fallbackChildPolicyWrapper, null);
+        new ChildPolicyReportingHelper(childLbHelperProvider, fallbackChildPolicyWrapper);
     final LoadBalancer lb =
         lbProvider.newLoadBalancer(childPolicyReportingHelper);
     final ConfigOrError lbConfig =

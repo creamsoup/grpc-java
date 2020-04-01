@@ -23,16 +23,15 @@ import com.google.common.base.Converter;
 import com.google.common.base.MoreObjects;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
-import io.grpc.Attributes;
 import io.grpc.ConnectivityState;
 import io.grpc.ConnectivityStateInfo;
-import io.grpc.EquivalentAddressGroup;
 import io.grpc.LoadBalancer;
 import io.grpc.LoadBalancer.CreateSubchannelArgs;
 import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.ResolvedAddresses;
 import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
+import io.grpc.LoadBalancer.SubchannelStateListener;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.ManagedChannel;
 import io.grpc.NameResolver.ConfigOrError;
@@ -45,6 +44,7 @@ import io.grpc.lookup.v1.RouteLookupServiceGrpc;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc.RouteLookupServiceStub;
 import io.grpc.rls.internal.AsyncCachingRlsClient.ChildPolicyReportingHelper.ChildLbStatusListener;
 import io.grpc.rls.internal.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider;
+import io.grpc.rls.internal.LbPolicyConfiguration.ChildLoadBalancingPolicy;
 import io.grpc.rls.internal.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.internal.LruCache.EvictionListener;
 import io.grpc.rls.internal.LruCache.EvictionType;
@@ -54,14 +54,15 @@ import io.grpc.rls.internal.RlsProtoData.RouteLookupResponse;
 import io.grpc.rls.internal.Throttler.ThrottledException;
 import io.grpc.stub.StreamObserver;
 import io.grpc.util.ForwardingLoadBalancerHelper;
+import io.grpc.util.ForwardingSubchannel;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.CheckReturnValue;
 import javax.annotation.Nullable;
+import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
 
 /**
@@ -82,18 +83,20 @@ public final class AsyncCachingRlsClient {
   private static final Converter<RouteLookupResponse, io.grpc.lookup.v1.RouteLookupResponse>
       respConverter = new RouteLookupResponseConverter().reverse();
 
+  // All cache status changes (pending, backoff, success) must be under this lock
   private final Object lock = new Object();
-
-  private final ScheduledExecutorService scheduledExecutorService;
   // LRU cache based on access order (BACKOFF and actual data will be here)
+  @GuardedBy("lock")
   private final LinkedHashLruCache<RouteLookupRequest, CacheEntry> linkedHashLruCache;
   // any RPC on the fly will cached in this map
+  @GuardedBy("lock")
   private final Map<RouteLookupRequest, PendingCacheEntry> pendingCallCache = new HashMap<>();
+
+  private final ScheduledExecutorService scheduledExecutorService;
   private final SynchronizationContext synchronizationContext;
   private final TimeProvider timeProvider;
   private final Throttler throttler;
   private final BackoffPolicy.Provider backoffProvider;
-
   private final long maxAgeNanos;
   private final long staleAgeNanos;
   private final long callTimeoutNanos;
@@ -133,31 +136,11 @@ public final class AsyncCachingRlsClient {
         checkNotNull(builder.childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
     this.backoffProvider = builder.backoffProvider;
     RlsPicker rlsPicker =
-        new RlsPicker(lbPolicyConfig, this, helper,
-        childLbResolvedAddressFactory);
+        new RlsPicker(lbPolicyConfig, this, helper, childLbResolvedAddressFactory);
     this.childLbHelperProvider =
         new ChildLoadBalancerHelperProvider(
             helper, rlsPicker.getSubchannelStateManager(), rlsPicker);
-    if (builder.refreshBackoffEntries) {
-      childLbStatusListener = new ChildLbStatusListener() {
-        ConnectivityState prevState = null;
-
-        @Override
-        public void onStatusChanged(ConnectivityState newState) {
-          if (prevState == ConnectivityState.TRANSIENT_FAILURE
-              && newState == ConnectivityState.READY) {
-            for (CacheEntry value : linkedHashLruCache.values()) {
-              if (value instanceof BackoffCacheEntry) {
-                ((BackoffCacheEntry) value).forceRefresh();
-              }
-            }
-          }
-          prevState = newState;
-        }
-      };
-    } else {
-      childLbStatusListener = null;
-    }
+    childLbStatusListener = builder.refreshBackoffEntries ? new BackoffRefreshListener() : null;
   }
 
   @CheckReturnValue
@@ -225,8 +208,10 @@ public final class AsyncCachingRlsClient {
   }
 
   /** Performs any pending maintenance operations needed by the cache. */
-  public synchronized void close() {
-    linkedHashLruCache.close();
+  public void close() {
+    synchronized (lock) {
+      linkedHashLruCache.close();
+    }
   }
 
   /**
@@ -258,440 +243,6 @@ public final class AsyncCachingRlsClient {
                   backoffProvider.get()));
         }
       }
-    }
-  }
-
-  /** Cached response of RouteLookupRequest. */
-  static final class CachedResponse {
-    private final RouteLookupRequest request;
-
-    // Should only have 1 of following 3 cache entry
-    @Nullable
-    private final DataCacheEntry dataCacheEntry;
-    @Nullable
-    private final PendingCacheEntry pendingCacheEntry;
-    @Nullable
-    private final BackoffCacheEntry backoffCacheEntry;
-
-    private CachedResponse(
-        RouteLookupRequest request,
-        DataCacheEntry dataCacheEntry,
-        PendingCacheEntry pendingCacheEntry,
-        BackoffCacheEntry backoffCacheEntry) {
-      this.request = checkNotNull(request, "request");
-      this.dataCacheEntry = dataCacheEntry;
-      this.pendingCacheEntry = pendingCacheEntry;
-      this.backoffCacheEntry = backoffCacheEntry;
-      checkState((dataCacheEntry != null ^ pendingCacheEntry != null ^ backoffCacheEntry != null)
-          && !(dataCacheEntry != null && pendingCacheEntry != null && backoffCacheEntry != null),
-          "Expected only 1 cache entry value provided");
-    }
-
-    /** Creates a {@link CachedResponse} from pending cache entry. */
-    static CachedResponse pendingResponse(PendingCacheEntry pendingEntry) {
-      return new CachedResponse(pendingEntry.request, null, pendingEntry, null);
-    }
-
-    /** Creates a {@link CachedResponse} from error cache entry. */
-    static CachedResponse backoffEntry(BackoffCacheEntry backoffEntry) {
-      return new CachedResponse(backoffEntry.request, null, null, backoffEntry);
-    }
-
-    /** Creates a {@link CachedResponse} from valid data cache entry. */
-    static CachedResponse dataEntry(DataCacheEntry dataEntry) {
-      return new CachedResponse(dataEntry.request, dataEntry, null, null);
-    }
-
-    boolean hasValidData() {
-      return dataCacheEntry != null;
-    }
-
-    @Nullable
-    ChildPolicyWrapper getChildPolicyWrapper() {
-      if (!hasValidData()) {
-        return null;
-      }
-      return dataCacheEntry.getChildPolicyWrapper();
-    }
-
-    @Nullable
-    public String getHeaderData() {
-      if (!hasValidData()) {
-        return null;
-      }
-      return dataCacheEntry.getHeaderData();
-    }
-
-    boolean hasError() {
-      return backoffCacheEntry != null;
-    }
-
-    @Nullable
-    Status getStatus() {
-      if (!hasError()) {
-        return null;
-      }
-      return backoffCacheEntry.getStatus();
-    }
-
-    @Override
-    public String toString() {
-      return MoreObjects.toStringHelper(this)
-          .add("request", request)
-          .add("dataCacheEntry", dataCacheEntry)
-          .add("pendingCacheEntry", pendingCacheEntry)
-          .add("backoffCacheEntry", backoffCacheEntry)
-          .toString();
-    }
-  }
-
-  /** Async cache entry where the RPC is still on the fly. */
-  private final class PendingCacheEntry {
-    private final ListenableFuture<RouteLookupResponse> pendingCall;
-    private final RouteLookupRequest request;
-    private final BackoffPolicy backoffPolicy;
-
-    PendingCacheEntry(
-        RouteLookupRequest request, ListenableFuture<RouteLookupResponse> pendingCall) {
-      this(request, pendingCall, null);
-    }
-
-    PendingCacheEntry(
-        RouteLookupRequest request,
-        ListenableFuture<RouteLookupResponse> pendingCall,
-        @Nullable BackoffPolicy backoffPolicy) {
-      this.request = checkNotNull(request, "request");
-      this.pendingCall = pendingCall;
-      this.backoffPolicy = backoffPolicy == null ? backoffProvider.get() : backoffPolicy;
-      lbPolicyConfig
-          .getLoadBalancingPolicy()
-          .addPendingRequest(request, this.backoffPolicy);
-      pendingCall.addListener(new Runnable() {
-        @Override
-        public void run() {
-          handleDoneFuture();
-        }
-      }, synchronizationContext);
-    }
-
-    private void handleDoneFuture() {
-      if (pendingCall.isCancelled()) {
-        return;
-      }
-
-      synchronized (lock) {
-        try {
-          transitionToData(pendingCall.get());
-        } catch (Exception e) {
-          if (e instanceof ThrottledException) {
-            transitionToBackOff(Status.RESOURCE_EXHAUSTED.withCause(e));
-          } else {
-            transitionToBackOff(Status.fromThrowable(e));
-          }
-        }
-      }
-    }
-
-    private void transitionToData(RouteLookupResponse routeLookupResponse) {
-      pendingCallCache.remove(request);
-      lbPolicyConfig
-          .getLoadBalancingPolicy()
-          .removePendingRequest(request);
-      linkedHashLruCache.cache(request, new DataCacheEntry(request, routeLookupResponse));
-    }
-
-    private void transitionToBackOff(Status status) {
-      pendingCallCache.remove(request);
-      linkedHashLruCache.cache(request, new BackoffCacheEntry(request, status, backoffPolicy));
-    }
-
-    @Override
-    public String toString() {
-      return MoreObjects.toStringHelper(this)
-          .add("pendingCall", pendingCall)
-          .add("request", request)
-          .add("backoffPolicy", backoffPolicy)
-          .toString();
-    }
-  }
-
-  /** Common cache entry data for {@link RlsAsyncLruCache}. */
-  abstract class CacheEntry {
-
-    protected final RouteLookupRequest request;
-
-    CacheEntry(RouteLookupRequest request) {
-      this.request = checkNotNull(request, "request");
-    }
-
-    abstract boolean hasData();
-
-    abstract int getSizeBytes();
-
-    boolean isExpired() {
-      return isExpired(timeProvider.currentTimeNanos());
-    }
-
-    abstract boolean isExpired(long now);
-
-    abstract void cleanup();
-  }
-
-  /** Implementation of {@link CacheEntry} contains valid data. */
-  private final class DataCacheEntry extends CacheEntry {
-    private final RouteLookupResponse response;
-    @Nullable
-    private final String headerData;
-    private final long expireTime;
-    private final long staleTime;
-    private final ChildPolicyWrapper childPolicyWrapper;
-
-    DataCacheEntry(RouteLookupRequest request, final RouteLookupResponse response) {
-      super(request);
-      this.response = checkNotNull(response, "response");
-      headerData = response.getHeaderData();
-
-      childPolicyWrapper = ChildPolicyWrapper.createOrGet(response.getTarget());
-      long now = timeProvider.currentTimeNanos();
-      expireTime = now + maxAgeNanos;
-      staleTime = now + staleAgeNanos;
-      linkedHashLruCache.updateEntrySize(request);
-
-      if (childPolicyWrapper.getPicker() != null) {
-        childPolicyWrapper
-            .getHelper()
-            .updateBalancingState(
-                childPolicyWrapper.getConnectivityStateInfo().getState(),
-                childPolicyWrapper.getPicker());
-      } else {
-        childPolicyWrapper.setChildPolicy(lbPolicyConfig.getLoadBalancingPolicy());
-        LoadBalancerProvider lbProvider = childPolicyWrapper
-            .getChildPolicy()
-            .getEffectiveLbProvider();
-        ChildPolicyReportingHelper childPolicyReportingHelper =
-            new ChildPolicyReportingHelper(
-                childLbHelperProvider, childPolicyWrapper, childLbStatusListener);
-        childPolicyWrapper.setHelper(childPolicyReportingHelper);
-
-        ConfigOrError lbConfig = lbProvider
-            .parseLoadBalancingPolicyConfig(
-                childPolicyWrapper.getChildPolicy().getEffectiveChildPolicy(response.getTarget()));
-        ResolvedAddresses resolvedAddresses =
-            childLbResolvedAddressFactory.create(lbConfig.getConfig());
-        LoadBalancer lb =
-            lbProvider.newLoadBalancer(childPolicyReportingHelper);
-        lb.handleResolvedAddresses(resolvedAddresses);
-        lb.requestConnection();
-      }
-    }
-
-    @Nullable
-    ChildPolicyWrapper getChildPolicyWrapper() {
-      return childPolicyWrapper;
-    }
-
-    String getHeaderData() {
-      return response.getHeaderData();
-    }
-
-    @Override
-    boolean hasData() {
-      return true;
-    }
-
-    @Override
-    int getSizeBytes() {
-      return (response.getTarget().length() + response.getHeaderData().length()) * 2 + 38 * 2;
-    }
-
-    @Override
-    void cleanup() {
-      if (childPolicyWrapper != null) {
-        childPolicyWrapper.release();
-      }
-    }
-
-    /**
-     * Refreshes cache entry by creating {@link PendingCacheEntry}. When the {@code
-     * PendingCacheEntry} received data from RLS server, it will replace the data entry if valid
-     * data still exists. Flow looks like following.
-     *
-     * <pre>
-     * Timeline                       | async refresh
-     *                                V put new cache (entry2)
-     * entry1: Pending | hasValue | staled |
-     * entry2:                        | OV | pending | hasValue | staled |
-     * </pre>
-     */
-    void maybeRefresh() {
-      synchronized (lock) {
-        if (pendingCallCache.containsKey(request)) {
-          // pending already requested
-          return;
-        }
-        pendingCallCache.put(request, new PendingCacheEntry(request, asyncRlsCall(request)));
-      }
-    }
-
-    @Override
-    boolean isExpired() {
-      return isExpired(timeProvider.currentTimeNanos());
-    }
-
-    @Override
-    boolean isExpired(long now) {
-      return expireTime <= now;
-    }
-
-    boolean isStaled(long now) {
-      return staleTime <= now;
-    }
-
-    @Override
-    public String toString() {
-      return MoreObjects.toStringHelper(this)
-          .add("response", response)
-          .add("headerData", headerData)
-          .add("expireTime", expireTime)
-          .add("staleTime", staleTime)
-          .add("childPolicyWrapper", childPolicyWrapper)
-          .toString();
-    }
-  }
-
-  /**
-   * Implementation of {@link CacheEntry} contains error. This entry will transition to pending
-   * status when the backoff time is expired.
-   */
-  private final class BackoffCacheEntry extends CacheEntry {
-
-    private final Status status;
-    private final ScheduledFuture<?> scheduledFuture;
-    private final BackoffPolicy backoffPolicy;
-    private final long expireMills;
-    private volatile boolean shutdown = false;
-
-    BackoffCacheEntry(RouteLookupRequest request, Status status, BackoffPolicy backoffPolicy) {
-      super(request);
-      this.status = checkNotNull(status, "status");
-      this.backoffPolicy = checkNotNull(backoffPolicy, "backoffPolicy");
-      long delayNanos = backoffPolicy.nextBackoffNanos();
-      this.expireMills = timeProvider.currentTimeNanos() + delayNanos;
-      this.scheduledFuture = scheduledExecutorService.schedule(
-          new Runnable() {
-            @Override
-            public void run() {
-              transitionToPending();
-            }
-          },
-          delayNanos,
-          TimeUnit.NANOSECONDS);
-    }
-
-    /** Forcefully refreshes cache entry by ignoring the backoff timer. */
-    void forceRefresh() {
-      boolean cancelled = scheduledFuture.cancel(false);
-      if (cancelled) {
-        transitionToPending();
-      }
-    }
-
-    private void transitionToPending() {
-      if (shutdown) {
-        return;
-      }
-
-      synchronized (lock) {
-        ListenableFuture<RouteLookupResponse> call = asyncRlsCall(request);
-        if (!call.isDone()) {
-          PendingCacheEntry pendingEntry = new PendingCacheEntry(request, call, backoffPolicy);
-          pendingCallCache.put(request, pendingEntry);
-          linkedHashLruCache.invalidate(request);
-        } else {
-          try {
-            RouteLookupResponse response = call.get();
-            linkedHashLruCache.cache(request, new DataCacheEntry(request, response));
-          } catch (Exception e) {
-            linkedHashLruCache.cache(
-                request,
-                new BackoffCacheEntry(request, Status.fromThrowable(e), backoffPolicy));
-          }
-        }
-      }
-    }
-
-    Status getStatus() {
-      return status;
-    }
-
-    @Override
-    boolean hasData() {
-      return false;
-    }
-
-    @Override
-    int getSizeBytes() {
-      return 0;
-    }
-
-    @Override
-    boolean isExpired(long now) {
-      return expireMills <= now;
-    }
-
-    @Override
-    void cleanup() {
-      shutdown = true;
-      if (!scheduledFuture.isCancelled()) {
-        scheduledFuture.cancel(true);
-      }
-    }
-
-    @Override
-    public String toString() {
-      return MoreObjects.toStringHelper(this)
-          .add("status", status)
-          .add("backoffPolicy", backoffPolicy)
-          .add("scheduledFuture", scheduledFuture)
-          .toString();
-    }
-  }
-
-  /**
-   * When any {@link CacheEntry} is evicted from {@link LruCache}, it performs {@link
-   * CacheEntry#cleanup()} after original {@link EvictionListener} is finished.
-   */
-  private static final class AutoCleaningEvictionListener
-      implements EvictionListener<RouteLookupRequest, CacheEntry> {
-
-    private final EvictionListener<RouteLookupRequest, CacheEntry> delegate;
-
-    AutoCleaningEvictionListener(
-        @Nullable EvictionListener<RouteLookupRequest, CacheEntry> delegate) {
-      this.delegate = delegate;
-    }
-
-    @Override
-    public void onEviction(RouteLookupRequest key, CacheEntry value, EvictionType cause) {
-      if (delegate != null) {
-        delegate.onEviction(key, value, cause);
-      }
-      // performs cleanup after delegation
-      value.cleanup();
-    }
-  }
-
-  /** A Throttler never throttles. */
-  private static final class HappyThrottler implements Throttler {
-
-    @Override
-    public boolean shouldThrottle() {
-      return false;
-    }
-
-    @Override
-    public void registerBackendResponse(boolean throttled) {
-      // no-op
     }
   }
 
@@ -793,12 +344,469 @@ public final class AsyncCachingRlsClient {
     }
   }
 
-  /** A delegating {@link LoadBalancer.Helper} populates {@link ChildPolicyWrapper}. */
+  /** View class for cached response. */
+  static final class CachedResponse {
+    private final RouteLookupRequest request;
+
+    // Should only have 1 of following 3 cache entry
+    @Nullable
+    private final DataCacheEntry dataCacheEntry;
+    @Nullable
+    private final PendingCacheEntry pendingCacheEntry;
+    @Nullable
+    private final BackoffCacheEntry backoffCacheEntry;
+
+    private CachedResponse(
+        RouteLookupRequest request,
+        DataCacheEntry dataCacheEntry,
+        PendingCacheEntry pendingCacheEntry,
+        BackoffCacheEntry backoffCacheEntry) {
+      this.request = checkNotNull(request, "request");
+      this.dataCacheEntry = dataCacheEntry;
+      this.pendingCacheEntry = pendingCacheEntry;
+      this.backoffCacheEntry = backoffCacheEntry;
+      checkState((dataCacheEntry != null ^ pendingCacheEntry != null ^ backoffCacheEntry != null)
+          && !(dataCacheEntry != null && pendingCacheEntry != null && backoffCacheEntry != null),
+          "Expected only 1 cache entry value provided");
+    }
+
+    /** Creates a {@link CachedResponse} from pending cache entry. */
+    static CachedResponse pendingResponse(PendingCacheEntry pendingEntry) {
+      return new CachedResponse(pendingEntry.request, null, pendingEntry, null);
+    }
+
+    /** Creates a {@link CachedResponse} from error cache entry. */
+    static CachedResponse backoffEntry(BackoffCacheEntry backoffEntry) {
+      return new CachedResponse(backoffEntry.request, null, null, backoffEntry);
+    }
+
+    /** Creates a {@link CachedResponse} from valid data cache entry. */
+    static CachedResponse dataEntry(DataCacheEntry dataEntry) {
+      return new CachedResponse(dataEntry.request, dataEntry, null, null);
+    }
+
+    boolean hasValidData() {
+      return dataCacheEntry != null;
+    }
+
+    @Nullable
+    ChildPolicyWrapper getChildPolicyWrapper() {
+      if (!hasValidData()) {
+        return null;
+      }
+      return dataCacheEntry.getChildPolicyWrapper();
+    }
+
+    @Nullable
+    public String getHeaderData() {
+      if (!hasValidData()) {
+        return null;
+      }
+      return dataCacheEntry.getHeaderData();
+    }
+
+    boolean hasError() {
+      return backoffCacheEntry != null;
+    }
+
+    @Nullable
+    Status getStatus() {
+      if (!hasError()) {
+        return null;
+      }
+      return backoffCacheEntry.getStatus();
+    }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("request", request)
+          .add("dataCacheEntry", dataCacheEntry)
+          .add("pendingCacheEntry", pendingCacheEntry)
+          .add("backoffCacheEntry", backoffCacheEntry)
+          .toString();
+    }
+  }
+
+  /** A pending cache entry when the async RouteLookup RPC is still on the fly. */
+  private final class PendingCacheEntry {
+    private final ListenableFuture<RouteLookupResponse> pendingCall;
+    private final RouteLookupRequest request;
+    private final BackoffPolicy backoffPolicy;
+
+    PendingCacheEntry(
+        RouteLookupRequest request, ListenableFuture<RouteLookupResponse> pendingCall) {
+      this(request, pendingCall, null);
+    }
+
+    PendingCacheEntry(
+        RouteLookupRequest request,
+        ListenableFuture<RouteLookupResponse> pendingCall,
+        @Nullable BackoffPolicy backoffPolicy) {
+      this.request = checkNotNull(request, "request");
+      this.pendingCall = pendingCall;
+      this.backoffPolicy = backoffPolicy == null ? backoffProvider.get() : backoffPolicy;
+      lbPolicyConfig
+          .getLoadBalancingPolicy()
+          .addPendingRequest(request, this.backoffPolicy);
+      pendingCall.addListener(new Runnable() {
+        @Override
+        public void run() {
+          handleDoneFuture();
+        }
+      }, synchronizationContext);
+    }
+
+    private void handleDoneFuture() {
+      if (pendingCall.isCancelled()) {
+        return;
+      }
+
+      try {
+        transitionToDataEntry(pendingCall.get());
+      } catch (Exception e) {
+        if (e instanceof ThrottledException) {
+          transitionToBackOff(Status.RESOURCE_EXHAUSTED.withCause(e));
+        } else {
+          transitionToBackOff(Status.fromThrowable(e));
+        }
+      }
+    }
+
+    private void transitionToDataEntry(RouteLookupResponse routeLookupResponse) {
+      synchronized (lock) {
+        pendingCallCache.remove(request);
+        lbPolicyConfig
+            .getLoadBalancingPolicy()
+            .removePendingRequest(request);
+        linkedHashLruCache.cache(request, new DataCacheEntry(request, routeLookupResponse));
+      }
+    }
+
+    private void transitionToBackOff(Status status) {
+      synchronized (lock) {
+        pendingCallCache.remove(request);
+        linkedHashLruCache.cache(request, new BackoffCacheEntry(request, status, backoffPolicy));
+      }
+    }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("request", request)
+          .add("pendingCall", pendingCall)
+          .add("backoffPolicy", backoffPolicy)
+          .toString();
+    }
+  }
+
+  /** Common cache entry data for {@link RlsAsyncLruCache}. */
+  abstract class CacheEntry {
+
+    protected final RouteLookupRequest request;
+
+    CacheEntry(RouteLookupRequest request) {
+      this.request = checkNotNull(request, "request");
+    }
+
+    abstract boolean hasData();
+
+    abstract int getSizeBytes();
+
+    boolean isExpired() {
+      return isExpired(timeProvider.currentTimeNanos());
+    }
+
+    abstract boolean isExpired(long now);
+
+    abstract void cleanup();
+  }
+
+  /** Implementation of {@link CacheEntry} contains valid data. */
+  private final class DataCacheEntry extends CacheEntry {
+    private final RouteLookupResponse response;
+    @Nullable
+    private final String headerData;
+    private final long expireTime;
+    private final long staleTime;
+    @Nullable
+    private ChildPolicyWrapper childPolicyWrapper;
+
+    DataCacheEntry(RouteLookupRequest request, final RouteLookupResponse response) {
+      super(request);
+      this.response = checkNotNull(response, "response");
+      headerData = response.getHeaderData();
+      childPolicyWrapper = ChildPolicyWrapper.createOrGet(response.getTarget());
+      long now = timeProvider.currentTimeNanos();
+      expireTime = now + maxAgeNanos;
+      staleTime = now + staleAgeNanos;
+
+      if (childPolicyWrapper.getPicker() != null) {
+        // using cached childPolicyWrapper
+        updateLbState();
+      } else {
+        createChildLbPolicy(response);
+        linkedHashLruCache.updateEntrySize(request);
+      }
+    }
+
+    private void updateLbState() {
+      childPolicyWrapper
+          .getHelper()
+          .updateBalancingState(
+              childPolicyWrapper.getConnectivityStateInfo().getState(),
+              childPolicyWrapper.getPicker());
+    }
+
+    private void createChildLbPolicy(RouteLookupResponse response) {
+      ChildLoadBalancingPolicy childPolicy = lbPolicyConfig.getLoadBalancingPolicy();
+      childPolicyWrapper.setChildPolicy(childPolicy);
+      LoadBalancerProvider lbProvider = childPolicy.getEffectiveLbProvider();
+      ConfigOrError lbConfig =
+          lbProvider
+              .parseLoadBalancingPolicyConfig(
+                  childPolicy.getEffectiveChildPolicy(response.getTarget()));
+
+      ChildPolicyReportingHelper childPolicyReportingHelper =
+          new ChildPolicyReportingHelper(
+              childLbHelperProvider, childPolicyWrapper, childLbStatusListener);
+      childPolicyWrapper.setHelper(childPolicyReportingHelper);
+
+      LoadBalancer lb = lbProvider.newLoadBalancer(childPolicyReportingHelper);
+      lb.handleResolvedAddresses(childLbResolvedAddressFactory.create(lbConfig.getConfig()));
+      lb.requestConnection();
+    }
+
+    @Nullable
+    ChildPolicyWrapper getChildPolicyWrapper() {
+      return childPolicyWrapper;
+    }
+
+    String getHeaderData() {
+      return response.getHeaderData();
+    }
+
+    @Override
+    boolean hasData() {
+      return true;
+    }
+
+    @Override
+    int getSizeBytes() {
+      // size of strings and java object overhead, actual memory usage is more than this.
+      return (response.getTarget().length() + response.getHeaderData().length()) * 2 + 38 * 2;
+    }
+
+    @Override
+    void cleanup() {
+      if (childPolicyWrapper != null) {
+        childPolicyWrapper.release();
+        childPolicyWrapper = null;
+      }
+    }
+
+    /**
+     * Refreshes cache entry by creating {@link PendingCacheEntry}. When the {@code
+     * PendingCacheEntry} received data from RLS server, it will replace the data entry if valid
+     * data still exists. Flow looks like following.
+     *
+     * <pre>
+     * Timeline                       | async refresh
+     *                                V put new cache (entry2)
+     * entry1: Pending | hasValue | staled |
+     * entry2:                        | OV | pending | hasValue | staled |
+     * </pre>
+     */
+    void maybeRefresh() {
+      synchronized (lock) {
+        if (pendingCallCache.containsKey(request)) {
+          // pending already requested
+          return;
+        }
+        pendingCallCache.put(request, new PendingCacheEntry(request, asyncRlsCall(request)));
+      }
+    }
+
+    @Override
+    boolean isExpired() {
+      return isExpired(timeProvider.currentTimeNanos());
+    }
+
+    @Override
+    boolean isExpired(long now) {
+      return expireTime <= now;
+    }
+
+    boolean isStaled(long now) {
+      return staleTime <= now;
+    }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("request", request)
+          .add("response", response)
+          .add("headerData", headerData)
+          .add("expireTime", expireTime)
+          .add("staleTime", staleTime)
+          .add("childPolicyWrapper", childPolicyWrapper)
+          .toString();
+    }
+  }
+
+  /**
+   * Implementation of {@link CacheEntry} contains error. This entry will transition to pending
+   * status when the backoff time is expired.
+   */
+  private final class BackoffCacheEntry extends CacheEntry {
+
+    private final Status status;
+    private final ScheduledFuture<?> scheduledFuture;
+    private final BackoffPolicy backoffPolicy;
+    private final long expireMills;
+    private volatile boolean shutdown = false;
+
+    BackoffCacheEntry(RouteLookupRequest request, Status status, BackoffPolicy backoffPolicy) {
+      super(request);
+      this.status = checkNotNull(status, "status");
+      this.backoffPolicy = checkNotNull(backoffPolicy, "backoffPolicy");
+      long delayNanos = backoffPolicy.nextBackoffNanos();
+      this.expireMills = timeProvider.currentTimeNanos() + delayNanos;
+      this.scheduledFuture = scheduledExecutorService.schedule(
+          new Runnable() {
+            @Override
+            public void run() {
+              transitionToPending();
+            }
+          },
+          delayNanos,
+          TimeUnit.NANOSECONDS);
+    }
+
+    /** Forcefully refreshes cache entry by ignoring the backoff timer. */
+    void forceRefresh() {
+      boolean cancelled = scheduledFuture.cancel(false);
+      if (cancelled) {
+        transitionToPending();
+      }
+    }
+
+    private void transitionToPending() {
+      if (shutdown) {
+        return;
+      }
+
+      synchronized (lock) {
+        ListenableFuture<RouteLookupResponse> call = asyncRlsCall(request);
+        if (!call.isDone()) {
+          PendingCacheEntry pendingEntry = new PendingCacheEntry(request, call, backoffPolicy);
+          pendingCallCache.put(request, pendingEntry);
+          linkedHashLruCache.invalidate(request);
+        } else {
+          try {
+            RouteLookupResponse response = call.get();
+            linkedHashLruCache.cache(request, new DataCacheEntry(request, response));
+          } catch (Exception e) {
+            linkedHashLruCache.cache(
+                request,
+                new BackoffCacheEntry(request, Status.fromThrowable(e), backoffPolicy));
+          }
+        }
+      }
+    }
+
+    Status getStatus() {
+      return status;
+    }
+
+    @Override
+    boolean hasData() {
+      return false;
+    }
+
+    @Override
+    int getSizeBytes() {
+      return 0;
+    }
+
+    @Override
+    boolean isExpired(long now) {
+      return expireMills <= now;
+    }
+
+    @Override
+    void cleanup() {
+      shutdown = true;
+      if (!scheduledFuture.isCancelled()) {
+        scheduledFuture.cancel(true);
+      }
+    }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("request", request)
+          .add("status", status)
+          .add("backoffPolicy", backoffPolicy)
+          .add("scheduledFuture", scheduledFuture)
+          .toString();
+    }
+  }
+
+  /**
+   * When any {@link CacheEntry} is evicted from {@link LruCache}, it performs {@link
+   * CacheEntry#cleanup()} after original {@link EvictionListener} is finished.
+   */
+  private static final class AutoCleaningEvictionListener
+      implements EvictionListener<RouteLookupRequest, CacheEntry> {
+
+    private final EvictionListener<RouteLookupRequest, CacheEntry> delegate;
+
+    AutoCleaningEvictionListener(
+        @Nullable EvictionListener<RouteLookupRequest, CacheEntry> delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public void onEviction(RouteLookupRequest key, CacheEntry value, EvictionType cause) {
+      if (delegate != null) {
+        delegate.onEviction(key, value, cause);
+      }
+      // performs cleanup after delegation
+      value.cleanup();
+    }
+  }
+
+  /** A Throttler never throttles. */
+  private static final class HappyThrottler implements Throttler {
+
+    @Override
+    public boolean shouldThrottle() {
+      return false;
+    }
+
+    @Override
+    public void registerBackendResponse(boolean throttled) {
+      // no-op
+    }
+  }
+
+  /**
+   * A delegating {@link LoadBalancer.Helper} maintains status of {@link ChildPolicyWrapper} when
+   * {@link Subchannel} status changed.
+   */
   static class ChildPolicyReportingHelper extends ForwardingLoadBalancerHelper {
 
     private final ChildLoadBalancerHelper delegate;
     private final ChildPolicyWrapper childPolicyWrapper;
+    @Nullable
     private final ChildLbStatusListener listener;
+
+    public ChildPolicyReportingHelper(
+        ChildLoadBalancerHelperProvider childHelperProvider,
+        ChildPolicyWrapper childPolicyWrapper) {
+      this(childHelperProvider, childPolicyWrapper, null);
+    }
 
     public ChildPolicyReportingHelper(
         ChildLoadBalancerHelperProvider childHelperProvider,
@@ -818,7 +826,6 @@ public final class AsyncCachingRlsClient {
     @Override
     public void updateBalancingState(ConnectivityState newState, SubchannelPicker newPicker) {
       childPolicyWrapper.setPicker(newPicker);
-      childPolicyWrapper.setConnectivityStateInfo(ConnectivityStateInfo.forNonError(newState));
       super.updateBalancingState(newState, newPicker);
       if (listener != null) {
         listener.onStatusChanged(newState);
@@ -826,17 +833,25 @@ public final class AsyncCachingRlsClient {
     }
 
     @Override
-    @SuppressWarnings("deprecation")
-    public Subchannel createSubchannel(List<EquivalentAddressGroup> addrs, Attributes attrs) {
-      return createSubchannel(CreateSubchannelArgs.newBuilder()
-          .setAddresses(addrs)
-          .setAttributes(attrs)
-          .build());
-    }
-
-    @Override
     public Subchannel createSubchannel(CreateSubchannelArgs args) {
-      return super.createSubchannel(args);
+      final Subchannel subchannel = super.createSubchannel(args);
+      return new ForwardingSubchannel() {
+        @Override
+        protected Subchannel delegate() {
+          return subchannel;
+        }
+
+        @Override
+        public void start(final SubchannelStateListener listener) {
+          super.start(new SubchannelStateListener() {
+            @Override
+            public void onSubchannelState(ConnectivityStateInfo newState) {
+              childPolicyWrapper.setConnectivityStateInfo(newState);
+              listener.onSubchannelState(newState);
+            }
+          });
+        }
+      };
     }
 
     interface ChildLbStatusListener {
@@ -881,6 +896,31 @@ public final class AsyncCachingRlsClient {
     public String toString() {
       return MoreObjects.toStringHelper(this)
           .toString();
+    }
+  }
+
+  /**
+   * LbStatusListener refreshes {@link BackoffCacheEntry} when lb state is changed to {@link
+   * ConnectivityState#READY} from {@link ConnectivityState#TRANSIENT_FAILURE}.
+   */
+  private class BackoffRefreshListener implements ChildLbStatusListener {
+
+    @Nullable
+    private ConnectivityState prevState = null;
+
+    @Override
+    public void onStatusChanged(ConnectivityState newState) {
+      if (prevState == ConnectivityState.TRANSIENT_FAILURE
+          && newState == ConnectivityState.READY) {
+        synchronized (lock) {
+          for (CacheEntry value : linkedHashLruCache.values()) {
+            if (value instanceof BackoffCacheEntry) {
+              ((BackoffCacheEntry) value).forceRefresh();
+            }
+          }
+        }
+      }
+      prevState = newState;
     }
   }
 }
