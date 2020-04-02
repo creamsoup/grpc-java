@@ -218,7 +218,7 @@ public final class Client {
     String grpclbJson = "{\"grpclb\": {\"childPolicy\": [{\"pick_first\": {}}]}}";
     String serviceConfig = "{"
         + "\"loadBalancingConfig\": [{"
-        + "    \"rls\": {"
+        + "    \"rls-experimental\": {"
         + "      \"routeLookupConfig\": " + rlsConfigJson + ", "
         + "      \"childPolicy\": [" + grpclbJson + "],"
         + "      \"childPolicyConfigTargetFieldName\": \"serviceName\""

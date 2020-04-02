@@ -31,6 +31,7 @@ import io.grpc.LoadBalancerProvider;
 import io.grpc.LoadBalancerRegistry;
 import io.grpc.internal.BackoffPolicy;
 import io.grpc.internal.ObjectPool;
+import io.grpc.rls.internal.AsyncCachingRlsClient.ChildPolicyReportingHelper;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupRequest;
 import java.io.Closeable;
@@ -228,7 +229,7 @@ public final class LbPolicyConfiguration {
     private ConnectivityStateInfo connectivityStateInfo =
         ConnectivityStateInfo.forNonError(ConnectivityState.IDLE);
     private SubchannelPicker picker;
-    private Helper helper;
+    private ChildPolicyReportingHelper helper;
 
     private ChildPolicyWrapper(String target) {
       this.target = target;
@@ -265,11 +266,11 @@ public final class LbPolicyConfiguration {
       return picker;
     }
 
-    void setHelper(Helper helper) {
+    void setHelper(ChildPolicyReportingHelper helper) {
       this.helper = checkNotNull(helper, "helper");
     }
 
-    Helper getHelper() {
+    ChildPolicyReportingHelper getHelper() {
       return helper;
     }
 

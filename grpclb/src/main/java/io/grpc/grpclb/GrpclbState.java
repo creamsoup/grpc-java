@@ -822,7 +822,6 @@ final class GrpclbState {
     // RoundRobinPicker.
     if (picker.dropList.equals(currentPicker.dropList)
         && picker.pickList.equals(currentPicker.pickList)) {
-      System.out.println(1);
       return;
     }
     currentPicker = picker;

@@ -23,6 +23,7 @@ import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.util.ForwardingLoadBalancerHelper;
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /**
  * A delegating {@link Helper} for the child load blanacer. The child load-balancer notifies the
@@ -35,6 +36,8 @@ final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
   private final String target;
   private final SubchannelStateManager subchannelStateManager;
   private final SubchannelPicker picker;
+  @Nullable
+  private ConnectivityState prevState;
 
   private ChildLoadBalancerHelper(
       String target,
@@ -62,7 +65,10 @@ final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
       @Nonnull ConnectivityState newState,
       @Nonnull SubchannelPicker unused) {
     ConnectivityState newAggState = updateLbState(target, newState);
-    super.updateBalancingState(newAggState, picker);
+    if (prevState != newAggState) {
+      prevState = newAggState;
+      super.updateBalancingState(newAggState, picker);
+    }
   }
 
   private ConnectivityState updateLbState(String target, ConnectivityState state) {

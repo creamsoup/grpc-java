@@ -19,6 +19,7 @@ package io.grpc.rls;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import io.grpc.ChannelLogger.ChannelLogLevel;
+import io.grpc.ConnectivityState;
 import io.grpc.LoadBalancer;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
@@ -29,6 +30,7 @@ import io.grpc.rls.internal.LbPolicyConfiguration;
 import io.grpc.rls.internal.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
 import java.util.concurrent.TimeUnit;
+import javax.annotation.Nullable;
 
 /**
  * Implementation of {@link LoadBalancer} backed by route lookup service.
@@ -36,8 +38,11 @@ import java.util.concurrent.TimeUnit;
 final class RlsLoadBalancer extends LoadBalancer {
 
   private final Helper helper;
+  @Nullable
   private LbPolicyConfiguration lbPolicyConfiguration;
+  @Nullable
   private AsyncCachingRlsClient routeLookupClient;
+  @Nullable
   private ManagedChannel rlsServerChannel;
 
   RlsLoadBalancer(Helper helper) {
@@ -93,12 +98,16 @@ final class RlsLoadBalancer extends LoadBalancer {
 
   @Override
   public void requestConnection() {
-    // ???
+    if (rlsServerChannel != null) {
+      rlsServerChannel.getState(true);
+    }
   }
 
   @Override
   public void handleNameResolutionError(Status error) {
+    //TODO tell childLb with update lb state error
     System.out.println("!! resolution error" + error);
+//    helper.updateBalancingState(ConnectivityState.TRANSIENT_FAILURE, rlsPicker);
   }
 
   @Override
