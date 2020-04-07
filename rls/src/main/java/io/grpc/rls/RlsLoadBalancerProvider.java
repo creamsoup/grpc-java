@@ -30,9 +30,9 @@ import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
 import java.util.Map;
 
 /**
- * The provider for the "rls-experimental" balancing policy.  This class should not be directly referenced in
- * code.  The policy should be accessed through {@link io.grpc.LoadBalancerRegistry#getProvider}
- * with the name "rls-experimental".
+ * The provider for the "rls-experimental" balancing policy.  This class should not be directly
+ * referenced in code.  The policy should be accessed through {@link
+ * io.grpc.LoadBalancerRegistry#getProvider} with the name "rls-experimental".
  */
 public final class RlsLoadBalancerProvider extends LoadBalancerProvider {
 

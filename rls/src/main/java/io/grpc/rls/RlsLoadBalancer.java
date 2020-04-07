@@ -19,7 +19,6 @@ package io.grpc.rls;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import io.grpc.ChannelLogger.ChannelLogLevel;
-import io.grpc.ConnectivityState;
 import io.grpc.LoadBalancer;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
@@ -107,7 +106,7 @@ final class RlsLoadBalancer extends LoadBalancer {
   public void handleNameResolutionError(Status error) {
     //TODO tell childLb with update lb state error
     System.out.println("!! resolution error" + error);
-//    helper.updateBalancingState(ConnectivityState.TRANSIENT_FAILURE, rlsPicker);
+    // helper.updateBalancingState(ConnectivityState.TRANSIENT_FAILURE, rlsPicker);
   }
 
   @Override

@@ -25,7 +25,6 @@ import com.google.common.base.MoreObjects;
 import com.google.common.collect.Iterables;
 import io.grpc.ConnectivityState;
 import io.grpc.ConnectivityStateInfo;
-import io.grpc.LoadBalancer.Helper;
 import io.grpc.LoadBalancer.SubchannelPicker;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.LoadBalancerRegistry;

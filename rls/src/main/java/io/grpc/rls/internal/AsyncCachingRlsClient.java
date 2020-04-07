@@ -190,7 +190,7 @@ public final class AsyncCachingRlsClient {
       }
 
       long now = timeProvider.currentTimeNanos();
-      if (cacheEntry.hasData()) {
+      if (cacheEntry instanceof DataCacheEntry) {
         // cache hit, initiate async-refresh if entry is staled
         DataCacheEntry dataEntry = ((DataCacheEntry) cacheEntry);
         if (dataEntry.isStaled(now)) {
@@ -506,8 +506,6 @@ public final class AsyncCachingRlsClient {
       this.request = checkNotNull(request, "request");
     }
 
-    abstract boolean hasData();
-
     abstract int getSizeBytes();
 
     boolean isExpired() {
@@ -581,11 +579,6 @@ public final class AsyncCachingRlsClient {
 
     String getHeaderData() {
       return response.getHeaderData();
-    }
-
-    @Override
-    boolean hasData() {
-      return true;
     }
 
     @Override
@@ -717,11 +710,6 @@ public final class AsyncCachingRlsClient {
     }
 
     @Override
-    boolean hasData() {
-      return false;
-    }
-
-    @Override
     int getSizeBytes() {
       return 0;
     }
@@ -799,13 +787,13 @@ public final class AsyncCachingRlsClient {
     @Nullable
     private final ChildLbStatusListener listener;
 
-    public ChildPolicyReportingHelper(
+    ChildPolicyReportingHelper(
         ChildLoadBalancerHelperProvider childHelperProvider,
         ChildPolicyWrapper childPolicyWrapper) {
       this(childHelperProvider, childPolicyWrapper, null);
     }
 
-    public ChildPolicyReportingHelper(
+    ChildPolicyReportingHelper(
         ChildLoadBalancerHelperProvider childHelperProvider,
         ChildPolicyWrapper childPolicyWrapper,
         @Nullable ChildLbStatusListener listener) {
