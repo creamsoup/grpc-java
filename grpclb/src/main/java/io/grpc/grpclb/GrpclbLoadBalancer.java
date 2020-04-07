@@ -128,7 +128,8 @@ class GrpclbLoadBalancer extends LoadBalancer {
     resetStates();
     checkState(grpclbState == null, "Should've been cleared");
     grpclbState =
-        new GrpclbState(config, helper, subchannelPool, time, stopwatch, backoffPolicyProvider);
+        new GrpclbState(
+            config, helper, subchannelPool, time, stopwatch, backoffPolicyProvider);
   }
 
   @Override

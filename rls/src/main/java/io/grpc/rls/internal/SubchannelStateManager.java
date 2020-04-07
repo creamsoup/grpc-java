@@ -25,14 +25,14 @@ import javax.annotation.Nullable;
 interface SubchannelStateManager {
 
   /**
-   * Registers and updates new state for given subchannel. {@link ConnectivityState#SHUTDOWN}
-   * behaves like unregistering the subchannel.
+   * Registers and updates state for given subchannel. {@link ConnectivityState#SHUTDOWN}
+   * unregisters the subchannel.
    */
   void updateState(String name, ConnectivityState newState);
 
   /**
-   * Returns current subchannel state for given subchannel name. {@code null} if subchannel is not
-   * registered.
+   * Returns current subchannel state for given subchannel name if exists, otherwise returns
+   * {@code null}.
    */
   @Nullable
   ConnectivityState getState(String name);

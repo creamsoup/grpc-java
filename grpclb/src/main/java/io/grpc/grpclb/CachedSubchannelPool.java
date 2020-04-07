@@ -35,9 +35,6 @@ import java.util.concurrent.TimeUnit;
  * A {@link SubchannelPool} that keeps returned {@link Subchannel}s for a given time before it's
  * shut down by the pool.
  */
-// TODO(creamsoup) address to subchannel is not 1:1 mapping because subchannel can update its
-//  address. Use Multimap and ForwardingSubchannel (override updateAddresses) to maintain most up to
-//  dated subchannel view.
 final class CachedSubchannelPool implements SubchannelPool {
   private final HashMap<EquivalentAddressGroup, CacheEntry> cache =
       new HashMap<>();
@@ -53,8 +50,8 @@ final class CachedSubchannelPool implements SubchannelPool {
   }
 
   @Override
-  public void registerListener(PooledSubchannelStateListener pooledSubchannelStateListener) {
-    this.listener = checkNotNull(pooledSubchannelStateListener, "pooledSubchannelStateListener");
+  public void registerListener(PooledSubchannelStateListener listener) {
+    this.listener = checkNotNull(listener, "listener");
   }
 
   @Override
@@ -72,6 +69,7 @@ final class CachedSubchannelPool implements SubchannelPool {
       subchannel.start(new SubchannelStateListener() {
         @Override
         public void onSubchannelState(ConnectivityStateInfo newState) {
+          updateCachedSubchannelState(subchannel, newState);
           listener.onSubchannelState(subchannel, newState);
         }
       });
@@ -90,8 +88,8 @@ final class CachedSubchannelPool implements SubchannelPool {
     return subchannel;
   }
 
-  @Override
-  public void handleSubchannelState(Subchannel subchannel, ConnectivityStateInfo newStateInfo) {
+  private void updateCachedSubchannelState(
+      Subchannel subchannel, ConnectivityStateInfo newStateInfo) {
     CacheEntry cached = cache.get(subchannel.getAddresses());
     if (cached == null || cached.subchannel != subchannel) {
       // Given subchannel is not cached.  Not our responsibility.
