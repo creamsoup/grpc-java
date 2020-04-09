@@ -24,39 +24,39 @@ import com.google.common.base.MoreObjects;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import io.grpc.ConnectivityState;
-import io.grpc.ConnectivityStateInfo;
 import io.grpc.LoadBalancer;
-import io.grpc.LoadBalancer.CreateSubchannelArgs;
 import io.grpc.LoadBalancer.Helper;
+import io.grpc.LoadBalancer.PickResult;
+import io.grpc.LoadBalancer.PickSubchannelArgs;
 import io.grpc.LoadBalancer.ResolvedAddresses;
-import io.grpc.LoadBalancer.Subchannel;
 import io.grpc.LoadBalancer.SubchannelPicker;
-import io.grpc.LoadBalancer.SubchannelStateListener;
 import io.grpc.LoadBalancerProvider;
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
 import io.grpc.NameResolver.ConfigOrError;
 import io.grpc.Status;
 import io.grpc.SynchronizationContext;
 import io.grpc.internal.BackoffPolicy;
 import io.grpc.internal.ExponentialBackoffPolicy;
+import io.grpc.internal.PickSubchannelArgsImpl;
 import io.grpc.internal.TimeProvider;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc;
 import io.grpc.lookup.v1.RouteLookupServiceGrpc.RouteLookupServiceStub;
-import io.grpc.rls.internal.AsyncCachingRlsClient.ChildPolicyReportingHelper.ChildLbStatusListener;
 import io.grpc.rls.internal.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvider;
+import io.grpc.rls.internal.ChildPolicyReportingHelper.ChildLbStatusListener;
 import io.grpc.rls.internal.LbPolicyConfiguration.ChildLoadBalancingPolicy;
 import io.grpc.rls.internal.LbPolicyConfiguration.ChildPolicyWrapper;
 import io.grpc.rls.internal.LruCache.EvictionListener;
 import io.grpc.rls.internal.LruCache.EvictionType;
 import io.grpc.rls.internal.RlsProtoConverters.RouteLookupResponseConverter;
+import io.grpc.rls.internal.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupRequest;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupResponse;
 import io.grpc.rls.internal.Throttler.ThrottledException;
 import io.grpc.stub.StreamObserver;
-import io.grpc.util.ForwardingLoadBalancerHelper;
-import io.grpc.util.ForwardingSubchannel;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -107,9 +107,12 @@ public final class AsyncCachingRlsClient {
   private final ChildLoadBalancerHelperProvider childLbHelperProvider;
   @Nullable
   private final ChildLbStatusListener childLbStatusListener;
+  private final Helper helper;
+  private final SubchannelStateManager subchannelStateManager = new SubchannelStateManagerImpl();
+  private final RlsPicker rlsPicker;
 
   AsyncCachingRlsClient(final Builder builder) {
-    Helper helper = checkNotNull(builder.helper, "helper");
+    this.helper = checkNotNull(builder.helper, "helper");
     this.scheduledExecutorService = helper.getScheduledExecutorService();
     this.synchronizationContext = helper.getSynchronizationContext();
     checkState(builder.maxAgeNanos > 0, "maxAgeNanos should be positive");
@@ -130,16 +133,17 @@ public final class AsyncCachingRlsClient {
             scheduledExecutorService,
             timeProvider);
     this.lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
+    RlsRequestFactory requestFactory =
+        new RlsRequestFactory(lbPolicyConfig.getRouteLookupConfig());
+    rlsPicker = new RlsPicker(requestFactory);
+
     this.channel = checkNotNull(builder.channel, "channel");
     this.stub = RouteLookupServiceGrpc.newStub(channel);
     this.childLbResolvedAddressFactory =
         checkNotNull(builder.childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
     this.backoffProvider = builder.backoffProvider;
-    RlsPicker rlsPicker =
-        new RlsPicker(lbPolicyConfig, this, helper, childLbResolvedAddressFactory);
     this.childLbHelperProvider =
-        new ChildLoadBalancerHelperProvider(
-            helper, rlsPicker.getSubchannelStateManager(), rlsPicker);
+        new ChildLoadBalancerHelperProvider(helper, subchannelStateManager, rlsPicker);
     childLbStatusListener = builder.refreshBackoffEntries ? new BackoffRefreshListener() : null;
   }
 
@@ -341,7 +345,7 @@ public final class AsyncCachingRlsClient {
     }
   }
 
-  /** View class for cached response. */
+  /** Viewer class for cached response. */
   static final class CachedResponse {
     private final RouteLookupRequest request;
 
@@ -776,74 +780,6 @@ public final class AsyncCachingRlsClient {
     }
   }
 
-  /**
-   * A delegating {@link LoadBalancer.Helper} maintains status of {@link ChildPolicyWrapper} when
-   * {@link Subchannel} status changed.
-   */
-  static class ChildPolicyReportingHelper extends ForwardingLoadBalancerHelper {
-
-    private final ChildLoadBalancerHelper delegate;
-    private final ChildPolicyWrapper childPolicyWrapper;
-    @Nullable
-    private final ChildLbStatusListener listener;
-
-    ChildPolicyReportingHelper(
-        ChildLoadBalancerHelperProvider childHelperProvider,
-        ChildPolicyWrapper childPolicyWrapper) {
-      this(childHelperProvider, childPolicyWrapper, null);
-    }
-
-    ChildPolicyReportingHelper(
-        ChildLoadBalancerHelperProvider childHelperProvider,
-        ChildPolicyWrapper childPolicyWrapper,
-        @Nullable ChildLbStatusListener listener) {
-      this.childPolicyWrapper = checkNotNull(childPolicyWrapper, "childPolicyWrapper");
-      checkNotNull(childHelperProvider, "childHelperProvider");
-      this.delegate = childHelperProvider.forTarget(childPolicyWrapper.getTarget());
-      this.listener = listener;
-    }
-
-    @Override
-    protected Helper delegate() {
-      return delegate;
-    }
-
-    @Override
-    public void updateBalancingState(ConnectivityState newState, SubchannelPicker newPicker) {
-      childPolicyWrapper.setPicker(newPicker);
-      super.updateBalancingState(newState, newPicker);
-      if (listener != null) {
-        listener.onStatusChanged(newState);
-      }
-    }
-
-    @Override
-    public Subchannel createSubchannel(CreateSubchannelArgs args) {
-      final Subchannel subchannel = super.createSubchannel(args);
-      return new ForwardingSubchannel() {
-        @Override
-        protected Subchannel delegate() {
-          return subchannel;
-        }
-
-        @Override
-        public void start(final SubchannelStateListener listener) {
-          super.start(new SubchannelStateListener() {
-            @Override
-            public void onSubchannelState(ConnectivityStateInfo newState) {
-              childPolicyWrapper.setConnectivityStateInfo(newState);
-              listener.onSubchannelState(newState);
-            }
-          });
-        }
-      };
-    }
-
-    interface ChildLbStatusListener {
-      void onStatusChanged(ConnectivityState newState);
-    }
-  }
-
   /** Implementation of {@link LinkedHashLruCache} for RLS. */
   private static final class RlsAsyncLruCache
       extends LinkedHashLruCache<RouteLookupRequest, CacheEntry> {
@@ -906,6 +842,155 @@ public final class AsyncCachingRlsClient {
         }
       }
       prevState = newState;
+    }
+  }
+
+  /** A header will be added when RLS server respond with additional header data. */
+  public static final Metadata.Key<String> RLS_DATA_KEY =
+      Metadata.Key.of("X-Google-RLS-Data", Metadata.ASCII_STRING_MARSHALLER);
+
+  final class RlsPicker extends SubchannelPicker {
+
+    private final ChildLoadBalancerHelperProvider childLbHelperProvider;
+    private final RlsRequestFactory requestFactory;
+
+    RlsPicker(RlsRequestFactory requestFactory) {
+      this.requestFactory = checkNotNull(requestFactory, "requestFactory");
+      helper.updateBalancingState(ConnectivityState.CONNECTING, this);
+      this.childLbHelperProvider =
+          new ChildLoadBalancerHelperProvider(helper, subchannelStateManager, this);
+    }
+
+    @Override
+    public PickResult pickSubchannel(PickSubchannelArgs args) {
+      String[] methodName = args.getMethodDescriptor().getFullMethodName().split("/", 2);
+      RouteLookupRequest request =
+          requestFactory.create(methodName[0], methodName[1], args.getHeaders());
+      final CachedResponse response = AsyncCachingRlsClient.this.get(request);
+
+      PickSubchannelArgs rlsAppliedArgs = getApplyRlsHeader(args, response);
+      if (response.hasValidData()) {
+        ChildPolicyWrapper childPolicyWrapper = response.getChildPolicyWrapper();
+        ConnectivityState connectivityState =
+            childPolicyWrapper.getConnectivityStateInfo().getState();
+        switch (connectivityState) {
+          case CONNECTING:
+            return PickResult.withNoResult();
+          case IDLE:
+            if (childPolicyWrapper.getPicker() == null) {
+              return PickResult.withNoResult();
+            }
+            // fall through
+          case READY:
+            return childPolicyWrapper.getPicker().pickSubchannel(rlsAppliedArgs);
+          case TRANSIENT_FAILURE:
+            return handleError(rlsAppliedArgs, Status.INTERNAL);
+          case SHUTDOWN:
+          default:
+            return handleError(rlsAppliedArgs, Status.ABORTED);
+        }
+      } else if (response.hasError()) {
+        return handleError(rlsAppliedArgs, response.getStatus());
+      } else {
+        return PickResult.withNoResult();
+      }
+    }
+
+    private PickSubchannelArgs getApplyRlsHeader(PickSubchannelArgs args, CachedResponse response) {
+      if (response.getHeaderData() == null || response.getHeaderData().isEmpty()) {
+        return args;
+      }
+
+      Metadata headers = new Metadata();
+      headers.merge(args.getHeaders());
+      headers.put(RLS_DATA_KEY, response.getHeaderData());
+      return new PickSubchannelArgsImpl(args.getMethodDescriptor(), headers, args.getCallOptions());
+    }
+
+    private PickResult handleError(PickSubchannelArgs args, Status cause) {
+      RequestProcessingStrategy strategy =
+          lbPolicyConfig.getRouteLookupConfig().getRequestProcessingStrategy();
+      switch (strategy) {
+        case SYNC_LOOKUP_CLIENT_SEES_ERROR:
+          return PickResult.withError(cause);
+        case SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR:
+          cause.asException().printStackTrace();
+          return useFallback(args);
+        default:
+          throw new AssertionError("Unknown RequestProcessingStrategy: " + strategy);
+      }
+    }
+
+    private ChildPolicyWrapper fallbackChildPolicyWrapper;
+
+    /** Uses Subchannel connected to default target. */
+    private PickResult useFallback(PickSubchannelArgs args) {
+      String defaultTarget = lbPolicyConfig.getRouteLookupConfig().getDefaultTarget();
+      if (fallbackChildPolicyWrapper == null
+          || !fallbackChildPolicyWrapper.getTarget().equals(defaultTarget)) {
+        try {
+          startFallbackChildPolicy()
+              .await(
+                  lbPolicyConfig.getRouteLookupConfig().getLookupServiceTimeoutInMillis(),
+                  TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          return PickResult.withError(Status.ABORTED.withDescription("interrupted"));
+        } catch (Exception e) {
+          return PickResult.withError(Status.fromThrowable(e));
+        }
+      }
+      SubchannelPicker picker = fallbackChildPolicyWrapper.getPicker();
+      switch (fallbackChildPolicyWrapper.getConnectivityStateInfo().getState()) {
+        case CONNECTING:
+          return PickResult.withNoResult();
+        case TRANSIENT_FAILURE:
+          // fall through
+        case SHUTDOWN:
+          return
+              PickResult
+                  .withError(fallbackChildPolicyWrapper.getConnectivityStateInfo().getStatus());
+        case IDLE:
+          if (picker == null) {
+            return PickResult.withNoResult();
+          }
+          // fall through
+        case READY:
+          return picker.pickSubchannel(args);
+        default:
+          throw new AssertionError();
+      }
+    }
+
+    private CountDownLatch startFallbackChildPolicy() {
+      String defaultTarget = lbPolicyConfig.getRouteLookupConfig().getDefaultTarget();
+      fallbackChildPolicyWrapper = ChildPolicyWrapper.createOrGet(defaultTarget);
+      final CountDownLatch readyLatch = new CountDownLatch(1);
+
+      LoadBalancerProvider lbProvider =
+          lbPolicyConfig.getLoadBalancingPolicy().getEffectiveLbProvider();
+      ChildPolicyReportingHelper childPolicyReportingHelper =
+          new ChildPolicyReportingHelper(childLbHelperProvider, fallbackChildPolicyWrapper);
+      final LoadBalancer lb =
+          lbProvider.newLoadBalancer(childPolicyReportingHelper);
+      final ConfigOrError lbConfig =
+          lbProvider
+              .parseLoadBalancingPolicyConfig(
+                  lbPolicyConfig
+                      .getLoadBalancingPolicy()
+                      .getEffectiveChildPolicy(defaultTarget));
+      fallbackChildPolicyWrapper.setChildPolicy(lbPolicyConfig.getLoadBalancingPolicy());
+      helper.getSynchronizationContext().execute(
+          new Runnable() {
+            @Override
+            public void run() {
+              lb.handleResolvedAddresses(
+                  childLbResolvedAddressFactory.create(lbConfig.getConfig()));
+              lb.requestConnection();
+              readyLatch.countDown();
+            }
+          });
+      return readyLatch;
     }
   }
 }

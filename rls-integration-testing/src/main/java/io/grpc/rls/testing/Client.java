@@ -280,8 +280,6 @@ public final class Client {
           + "  \"cacheSizeBytes\": 1000,\n"
           + "  \"defaultTarget\": \"defaultTarget\",\n"
           + "  \"requestProcessingStrategy\": \"SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR\"\n"
-        // SYNC_LOOKUP_CLIENT_SEES_ERROR
-        // SYNC_LOOKUP_DEFAULT_TARGET_ON_ERROR
           + "}";
   }
 }
