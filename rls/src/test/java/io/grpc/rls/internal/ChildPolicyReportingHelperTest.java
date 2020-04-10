@@ -1,3 +1,19 @@
+/*
+ * Copyright 2020 The gRPC Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.grpc.rls.internal;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -21,7 +37,6 @@ import java.net.SocketAddress;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-import org.mockito.ArgumentCaptor;
 
 @RunWith(JUnit4.class)
 public class ChildPolicyReportingHelperTest {
@@ -38,7 +53,7 @@ public class ChildPolicyReportingHelperTest {
       new ChildPolicyReportingHelper(helperProvider, childPolicyWrapper, childLbStatusListener);
 
   @Test
-  public void name() {
+  public void subchannelStateChange_updateChildPolicyWrapper() {
     Subchannel mockSubchannel = mock(Subchannel.class);
     when(helper.createSubchannel(any(CreateSubchannelArgs.class))).thenReturn(mockSubchannel);
     Subchannel subchannel =
@@ -49,17 +64,24 @@ public class ChildPolicyReportingHelperTest {
     subchannel.start(new SubchannelStateListener() {
       @Override
       public void onSubchannelState(ConnectivityStateInfo newState) {
-
+        // no-op
       }
     });
+
     assertThat(childPolicyWrapper.getConnectivityStateInfo())
         .isEqualTo(ConnectivityStateInfo.forNonError(ConnectivityState.IDLE));
     verify(childLbStatusListener).onStatusChanged(ConnectivityState.IDLE);
-    subchannel.
-    // create subchannel
-    // check wrapper has connectivity
+  }
 
-    // when status changed
-    // listener is called, picker is set or not
+  @Test
+  public void updateBalancingState_triggersListener() {
+    SubchannelPicker childPicker = mock(SubchannelPicker.class);
+
+    childPolicyReportingHelper.updateBalancingState(ConnectivityState.READY, childPicker);
+
+    verify(childLbStatusListener).onStatusChanged(ConnectivityState.READY);
+    assertThat(childPolicyWrapper.getPicker()).isEqualTo(childPicker);
+    // picker governs childPickers will be reported to parent LB
+    verify(helper).updateBalancingState(ConnectivityState.READY, picker);
   }
 }
