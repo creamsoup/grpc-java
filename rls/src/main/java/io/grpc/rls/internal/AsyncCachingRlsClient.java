@@ -75,6 +75,7 @@ import javax.annotation.concurrent.ThreadSafe;
  * will be expired when max age is reached. When the cached entry is staled (age of cache is in
  * between staled and max), AsyncRequestCache will asynchronously refresh the entry.
  */
+// TODO(creamsoup) revisit javadoc
 @ThreadSafe
 public final class AsyncCachingRlsClient {
 
@@ -92,57 +93,57 @@ public final class AsyncCachingRlsClient {
   @GuardedBy("lock")
   private final Map<RouteLookupRequest, PendingCacheEntry> pendingCallCache = new HashMap<>();
 
-  private final ScheduledExecutorService scheduledExecutorService;
   private final SynchronizationContext synchronizationContext;
+  private final ScheduledExecutorService scheduledExecutorService;
   private final TimeProvider timeProvider;
   private final Throttler throttler;
+
+  private final LbPolicyConfiguration lbPolicyConfig;
   private final BackoffPolicy.Provider backoffProvider;
   private final long maxAgeNanos;
   private final long staleAgeNanos;
   private final long callTimeoutNanos;
-  private final LbPolicyConfiguration lbPolicyConfig;
-  private final ManagedChannel channel;
+
+  private final Helper helper;
+  private final ManagedChannel rlsChannel;
+  private final RouteLookupServiceStub rlsStub;
+  private final RlsPicker rlsPicker;
   private final ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
-  private final RouteLookupServiceStub stub;
   private final ChildLoadBalancerHelperProvider childLbHelperProvider;
   @Nullable
   private final ChildLbStatusListener childLbStatusListener;
-  private final Helper helper;
   private final SubchannelStateManager subchannelStateManager = new SubchannelStateManagerImpl();
-  private final RlsPicker rlsPicker;
 
-  AsyncCachingRlsClient(final Builder builder) {
-    this.helper = checkNotNull(builder.helper, "helper");
-    this.scheduledExecutorService = helper.getScheduledExecutorService();
-    this.synchronizationContext = helper.getSynchronizationContext();
+  AsyncCachingRlsClient(Builder builder) {
+    helper = checkNotNull(builder.helper, "helper");
+    scheduledExecutorService = helper.getScheduledExecutorService();
+    synchronizationContext = helper.getSynchronizationContext();
     checkState(builder.maxAgeNanos > 0, "maxAgeNanos should be positive");
     checkState(builder.staleAgeNanos > 0, "staleAgeNanos should be positive");
     checkState(
         builder.maxAgeNanos >= builder.staleAgeNanos,
         "maxAgeNanos should be greater than equals to staleAgeMillis");
     checkState(builder.callTimeoutNanos > 0, "callTimeoutNanos should be positive");
-    this.maxAgeNanos = builder.maxAgeNanos;
-    this.staleAgeNanos = builder.staleAgeNanos;
-    this.callTimeoutNanos = builder.callTimeoutNanos;
-    this.timeProvider = checkNotNull(builder.timeProvider, "ticker");
-    this.throttler = checkNotNull(builder.throttler, "throttler");
-    this.linkedHashLruCache =
+    maxAgeNanos = builder.maxAgeNanos;
+    staleAgeNanos = builder.staleAgeNanos;
+    callTimeoutNanos = builder.callTimeoutNanos;
+    timeProvider = checkNotNull(builder.timeProvider, "timeProvider");
+    throttler = checkNotNull(builder.throttler, "throttler");
+    linkedHashLruCache =
         new RlsAsyncLruCache(
             builder.maxCacheSizeBytes,
             builder.evictionListener,
             scheduledExecutorService,
             timeProvider);
-    this.lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
-    RlsRequestFactory requestFactory =
-        new RlsRequestFactory(lbPolicyConfig.getRouteLookupConfig());
+    lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
+    RlsRequestFactory requestFactory = new RlsRequestFactory(lbPolicyConfig.getRouteLookupConfig());
     rlsPicker = new RlsPicker(requestFactory);
-
-    this.channel = checkNotNull(builder.channel, "channel");
-    this.stub = RouteLookupServiceGrpc.newStub(channel);
-    this.childLbResolvedAddressFactory =
+    rlsChannel = helper.createResolvingOobChannel(builder.target);
+    rlsStub = RouteLookupServiceGrpc.newStub(rlsChannel);
+    childLbResolvedAddressFactory =
         checkNotNull(builder.childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
-    this.backoffProvider = builder.backoffProvider;
-    this.childLbHelperProvider =
+    backoffProvider = builder.backoffProvider;
+    childLbHelperProvider =
         new ChildLoadBalancerHelperProvider(helper, subchannelStateManager, rlsPicker);
     childLbStatusListener = builder.refreshBackoffEntries ? new BackoffRefreshListener() : null;
   }
@@ -154,10 +155,9 @@ public final class AsyncCachingRlsClient {
       response.setException(new ThrottledException());
       return response;
     }
-    io.grpc.lookup.v1.RouteLookupRequest rlsRequest = reqConverter.convert(request);
-    stub.withDeadlineAfter(callTimeoutNanos, TimeUnit.NANOSECONDS)
+    rlsStub.withDeadlineAfter(callTimeoutNanos, TimeUnit.NANOSECONDS)
         .routeLookup(
-            rlsRequest,
+            reqConverter.convert(request),
             new StreamObserver<io.grpc.lookup.v1.RouteLookupResponse>() {
               @Override
               public void onNext(io.grpc.lookup.v1.RouteLookupResponse value) {
@@ -179,13 +179,11 @@ public final class AsyncCachingRlsClient {
   }
 
   /**
-   * Returns the value associated with {@code request} in this cache, obtaining that value from
-   * {@code loader} if necessary. The method improves upon the conventional "if cached, return;
-   * otherwise create, cache and return" pattern. If the cache was not present, it returns a future
-   * value.
+   * Returns async response of the {@code request}. The returned value can be in 3 different states;
+   * cached, pending and backed-off due to error.
    */
   @CheckReturnValue
-  public final CachedResponse get(final RouteLookupRequest request) {
+  public final CachedRouteLookupResponse get(final RouteLookupRequest request) {
     synchronized (lock) {
       final CacheEntry cacheEntry;
       cacheEntry = linkedHashLruCache.read(request);
@@ -201,9 +199,9 @@ public final class AsyncCachingRlsClient {
           dataEntry.maybeRefresh();
         }
       } else {
-        return CachedResponse.backoffEntry((BackoffCacheEntry) cacheEntry);
+        return CachedRouteLookupResponse.backoffEntry((BackoffCacheEntry) cacheEntry);
       }
-      return CachedResponse.dataEntry((DataCacheEntry) cacheEntry);
+      return CachedRouteLookupResponse.dataEntry((DataCacheEntry) cacheEntry);
     }
   }
 
@@ -212,7 +210,10 @@ public final class AsyncCachingRlsClient {
     synchronized (lock) {
       // all childPolicyWrapper will be returned via AutoCleaningEvictionListener
       linkedHashLruCache.close();
-      channel.shutdown();
+      // TODO(creamsoup) maybe cancel all pending requests
+      pendingCallCache.clear();
+      rlsChannel.shutdown();
+      rlsPicker.close();
     }
   }
 
@@ -221,24 +222,25 @@ public final class AsyncCachingRlsClient {
    * any status change is happening via event (async request finished, timed out, etc) in {@link
    * CacheEntry}.
    */
-  private CachedResponse handleNewRequest(RouteLookupRequest request) {
+  private CachedRouteLookupResponse handleNewRequest(RouteLookupRequest request) {
     synchronized (lock) {
       PendingCacheEntry pendingEntry = pendingCallCache.get(request);
       if (pendingEntry != null) {
-        return CachedResponse.pendingResponse(pendingEntry);
+        return CachedRouteLookupResponse.pendingResponse(pendingEntry);
       }
 
       ListenableFuture<RouteLookupResponse> asyncCall = asyncRlsCall(request);
       if (!asyncCall.isDone()) {
         pendingEntry = new PendingCacheEntry(request, asyncCall);
         pendingCallCache.put(request, pendingEntry);
-        return CachedResponse.pendingResponse(pendingEntry);
+        return CachedRouteLookupResponse.pendingResponse(pendingEntry);
       } else {
+        // async call returned finished future is most likely throttled
         try {
           RouteLookupResponse response = asyncCall.get();
-          return CachedResponse.dataEntry(new DataCacheEntry(request, response));
+          return CachedRouteLookupResponse.dataEntry(new DataCacheEntry(request, response));
         } catch (Exception e) {
-          return CachedResponse.backoffEntry(
+          return CachedRouteLookupResponse.backoffEntry(
               new BackoffCacheEntry(
                   request,
                   Status.fromThrowable(e),
@@ -248,109 +250,11 @@ public final class AsyncCachingRlsClient {
     }
   }
 
-  /** Returns a Builder for {@link AsyncCachingRlsClient}. */
-  public static Builder newBuilder() {
-    return new Builder();
-  }
-
-  /** A Builder for {@link AsyncCachingRlsClient}. */
-  public static final class Builder {
-
-    private Helper helper;
-    private LbPolicyConfiguration lbPolicyConfig;
-    private long maxCacheSizeBytes = 100 * 1024 * 1024; // 100 MB
-    private long maxAgeNanos = TimeUnit.MINUTES.toNanos(5);
-    private long staleAgeNanos = TimeUnit.MINUTES.toNanos(3);
-    private long callTimeoutNanos = TimeUnit.SECONDS.toNanos(5);
-    private TimeProvider timeProvider = TimeProvider.SYSTEM_TIME_PROVIDER;
-    private Throttler throttler = new HappyThrottler();
-    private EvictionListener<RouteLookupRequest, CacheEntry> evictionListener = null;
-    private ManagedChannel channel;
-    private ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
-    private BackoffPolicy.Provider backoffProvider = new ExponentialBackoffPolicy.Provider();
-    private boolean refreshBackoffEntries = false;
-
-    public Builder setMaxCacheSizeBytes(long maxCacheSizeBytes) {
-      this.maxCacheSizeBytes = maxCacheSizeBytes;
-      return this;
-    }
-
-    public Builder setMaxAgeNanos(long maxAgeNanos) {
-      this.maxAgeNanos = maxAgeNanos;
-      return this;
-    }
-
-    public Builder setStaleAgeNanos(long staleAgeNanos) {
-      this.staleAgeNanos = staleAgeNanos;
-      return this;
-    }
-
-    public Builder setCallTimeoutNanos(long callTimeoutNanos) {
-      this.callTimeoutNanos = callTimeoutNanos;
-      return this;
-    }
-
-    public Builder setTimeProvider(TimeProvider timeProvider) {
-      this.timeProvider = checkNotNull(timeProvider, "timeProvider");
-      return this;
-    }
-
-    public Builder setThrottler(Throttler throttler) {
-      this.throttler = checkNotNull(throttler, "throttler");
-      return this;
-    }
-
-    public Builder setEvictionListener(
-        @Nullable EvictionListener<RouteLookupRequest, CacheEntry> evictionListener) {
-      this.evictionListener = evictionListener;
-      return this;
-    }
-
-    public Builder setHelper(Helper helper) {
-      this.helper = checkNotNull(helper, "helper");
-      return this;
-    }
-
-    public Builder setLbPolicyConfig(LbPolicyConfiguration lbPolicyConfig) {
-      this.lbPolicyConfig = checkNotNull(lbPolicyConfig, "lbPolicyConfig");
-      return this;
-    }
-
-    public Builder setChannel(ManagedChannel rlsServerChannel) {
-      this.channel = checkNotNull(rlsServerChannel, "rlsServerChannel");
-      return this;
-    }
-
-    /**
-     * Sets a factory to create {@link ResolvedAddresses} for child load balancer.
-     */
-    public Builder setChildLbResolvedAddressesFactory(
-        ChildLbResolvedAddressFactory childLbResolvedAddressFactory) {
-      this.childLbResolvedAddressFactory =
-          checkNotNull(childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
-      return this;
-    }
-
-    public Builder setBackoffProvider(BackoffPolicy.Provider provider) {
-      this.backoffProvider = checkNotNull(provider, "provider");
-      return this;
-    }
-
-    public Builder refreshBackoffEntries() {
-      this.refreshBackoffEntries = true;
-      return this;
-    }
-
-    public AsyncCachingRlsClient build() {
-      return new AsyncCachingRlsClient(this);
-    }
-  }
-
-  /** Viewer class for cached response. */
-  static final class CachedResponse {
+  /** Viewer class for cached {@link RouteLookupResponse}. */
+  static final class CachedRouteLookupResponse {
     private final RouteLookupRequest request;
 
-    // Should only have 1 of following 3 cache entry
+    // Should only have 1 of following 3 cache entries
     @Nullable
     private final DataCacheEntry dataCacheEntry;
     @Nullable
@@ -358,7 +262,7 @@ public final class AsyncCachingRlsClient {
     @Nullable
     private final BackoffCacheEntry backoffCacheEntry;
 
-    private CachedResponse(
+    CachedRouteLookupResponse(
         RouteLookupRequest request,
         DataCacheEntry dataCacheEntry,
         PendingCacheEntry pendingCacheEntry,
@@ -372,19 +276,16 @@ public final class AsyncCachingRlsClient {
           "Expected only 1 cache entry value provided");
     }
 
-    /** Creates a {@link CachedResponse} from pending cache entry. */
-    static CachedResponse pendingResponse(PendingCacheEntry pendingEntry) {
-      return new CachedResponse(pendingEntry.request, null, pendingEntry, null);
+    static CachedRouteLookupResponse pendingResponse(PendingCacheEntry pendingEntry) {
+      return new CachedRouteLookupResponse(pendingEntry.request, null, pendingEntry, null);
     }
 
-    /** Creates a {@link CachedResponse} from error cache entry. */
-    static CachedResponse backoffEntry(BackoffCacheEntry backoffEntry) {
-      return new CachedResponse(backoffEntry.request, null, null, backoffEntry);
+    static CachedRouteLookupResponse backoffEntry(BackoffCacheEntry backoffEntry) {
+      return new CachedRouteLookupResponse(backoffEntry.request, null, null, backoffEntry);
     }
 
-    /** Creates a {@link CachedResponse} from valid data cache entry. */
-    static CachedResponse dataEntry(DataCacheEntry dataEntry) {
-      return new CachedResponse(dataEntry.request, dataEntry, null, null);
+    static CachedRouteLookupResponse dataEntry(DataCacheEntry dataEntry) {
+      return new CachedRouteLookupResponse(dataEntry.request, dataEntry, null, null);
     }
 
     boolean hasValidData() {
@@ -460,24 +361,26 @@ public final class AsyncCachingRlsClient {
     }
 
     private void handleDoneFuture() {
-      if (pendingCall.isCancelled()) {
-        return;
-      }
+      synchronized (lock) {
+        pendingCallCache.remove(request);
+        if (pendingCall.isCancelled()) {
+          return;
+        }
 
-      try {
-        transitionToDataEntry(pendingCall.get());
-      } catch (Exception e) {
-        if (e instanceof ThrottledException) {
-          transitionToBackOff(Status.RESOURCE_EXHAUSTED.withCause(e));
-        } else {
-          transitionToBackOff(Status.fromThrowable(e));
+        try {
+          transitionToDataEntry(pendingCall.get());
+        } catch (Exception e) {
+          if (e instanceof ThrottledException) {
+            transitionToBackOff(Status.RESOURCE_EXHAUSTED.withCause(e));
+          } else {
+            transitionToBackOff(Status.fromThrowable(e));
+          }
         }
       }
     }
 
     private void transitionToDataEntry(RouteLookupResponse routeLookupResponse) {
       synchronized (lock) {
-        pendingCallCache.remove(request);
         lbPolicyConfig
             .getLoadBalancingPolicy()
             .removePendingRequest(request);
@@ -525,17 +428,13 @@ public final class AsyncCachingRlsClient {
   /** Implementation of {@link CacheEntry} contains valid data. */
   private final class DataCacheEntry extends CacheEntry {
     private final RouteLookupResponse response;
-    @Nullable
-    private final String headerData;
     private final long expireTime;
     private final long staleTime;
-    @Nullable
     private ChildPolicyWrapper childPolicyWrapper;
 
     DataCacheEntry(RouteLookupRequest request, final RouteLookupResponse response) {
       super(request);
       this.response = checkNotNull(response, "response");
-      headerData = response.getHeaderData();
       childPolicyWrapper = ChildPolicyWrapper.createOrGet(response.getTarget());
       long now = timeProvider.currentTimeNanos();
       expireTime = now + maxAgeNanos;
@@ -551,6 +450,9 @@ public final class AsyncCachingRlsClient {
     }
 
     private void updateLbState() {
+      checkState(
+          childPolicyWrapper.getHelper() != null,
+          "incomplete childPolicyWrapper found, this is a bug");
       childPolicyWrapper
           .getHelper()
           .updateBalancingState(
@@ -577,29 +479,6 @@ public final class AsyncCachingRlsClient {
       lb.requestConnection();
     }
 
-    @Nullable
-    ChildPolicyWrapper getChildPolicyWrapper() {
-      return childPolicyWrapper;
-    }
-
-    String getHeaderData() {
-      return response.getHeaderData();
-    }
-
-    @Override
-    int getSizeBytes() {
-      // size of strings and java object overhead, actual memory usage is more than this.
-      return (response.getTarget().length() + response.getHeaderData().length()) * 2 + 38 * 2;
-    }
-
-    @Override
-    void cleanup() {
-      if (childPolicyWrapper != null) {
-        childPolicyWrapper.release();
-        childPolicyWrapper = null;
-      }
-    }
-
     /**
      * Refreshes cache entry by creating {@link PendingCacheEntry}. When the {@code
      * PendingCacheEntry} received data from RLS server, it will replace the data entry if valid
@@ -622,9 +501,19 @@ public final class AsyncCachingRlsClient {
       }
     }
 
+    @Nullable
+    ChildPolicyWrapper getChildPolicyWrapper() {
+      return childPolicyWrapper;
+    }
+
+    String getHeaderData() {
+      return response.getHeaderData();
+    }
+
     @Override
-    boolean isExpired() {
-      return isExpired(timeProvider.currentTimeNanos());
+    int getSizeBytes() {
+      // size of strings and java object overhead, actual memory usage is more than this.
+      return (response.getTarget().length() + response.getHeaderData().length()) * 2 + 38 * 2;
     }
 
     @Override
@@ -637,11 +526,18 @@ public final class AsyncCachingRlsClient {
     }
 
     @Override
+    void cleanup() {
+      childPolicyWrapper.release();
+      synchronized (lock) {
+        linkedHashLruCache.invalidate(request);
+      }
+    }
+
+    @Override
     public String toString() {
       return MoreObjects.toStringHelper(this)
           .add("request", request)
           .add("response", response)
-          .add("headerData", headerData)
           .add("expireTime", expireTime)
           .add("staleTime", staleTime)
           .add("childPolicyWrapper", childPolicyWrapper)
@@ -659,7 +555,7 @@ public final class AsyncCachingRlsClient {
     private final ScheduledFuture<?> scheduledFuture;
     private final BackoffPolicy backoffPolicy;
     private final long expireMills;
-    private volatile boolean shutdown = false;
+    private boolean shutdown = false;
 
     BackoffCacheEntry(RouteLookupRequest request, Status status, BackoffPolicy backoffPolicy) {
       super(request);
@@ -730,6 +626,9 @@ public final class AsyncCachingRlsClient {
       if (!scheduledFuture.isCancelled()) {
         scheduledFuture.cancel(true);
       }
+      synchronized (lock) {
+        linkedHashLruCache.invalidate(request);
+      }
     }
 
     @Override
@@ -740,6 +639,104 @@ public final class AsyncCachingRlsClient {
           .add("backoffPolicy", backoffPolicy)
           .add("scheduledFuture", scheduledFuture)
           .toString();
+    }
+  }
+
+  /** Returns a Builder for {@link AsyncCachingRlsClient}. */
+  public static Builder newBuilder() {
+    return new Builder();
+  }
+
+  /** A Builder for {@link AsyncCachingRlsClient}. */
+  public static final class Builder {
+
+    private Helper helper;
+    private LbPolicyConfiguration lbPolicyConfig;
+    private long maxCacheSizeBytes = 100 * 1024 * 1024; // 100 MB
+    private long maxAgeNanos = TimeUnit.MINUTES.toNanos(5);
+    private long staleAgeNanos = TimeUnit.MINUTES.toNanos(3);
+    private long callTimeoutNanos = TimeUnit.SECONDS.toNanos(5);
+    private TimeProvider timeProvider = TimeProvider.SYSTEM_TIME_PROVIDER;
+    private Throttler throttler = new HappyThrottler();
+    private EvictionListener<RouteLookupRequest, CacheEntry> evictionListener = null;
+    private ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
+    private BackoffPolicy.Provider backoffProvider = new ExponentialBackoffPolicy.Provider();
+    private boolean refreshBackoffEntries = false;
+    private String target;
+
+    public Builder setMaxCacheSizeBytes(long maxCacheSizeBytes) {
+      this.maxCacheSizeBytes = maxCacheSizeBytes;
+      return this;
+    }
+
+    public Builder setMaxAgeNanos(long maxAgeNanos) {
+      this.maxAgeNanos = maxAgeNanos;
+      return this;
+    }
+
+    public Builder setStaleAgeNanos(long staleAgeNanos) {
+      this.staleAgeNanos = staleAgeNanos;
+      return this;
+    }
+
+    public Builder setCallTimeoutNanos(long callTimeoutNanos) {
+      this.callTimeoutNanos = callTimeoutNanos;
+      return this;
+    }
+
+    public Builder setTimeProvider(TimeProvider timeProvider) {
+      this.timeProvider = checkNotNull(timeProvider, "timeProvider");
+      return this;
+    }
+
+    public Builder setThrottler(Throttler throttler) {
+      this.throttler = checkNotNull(throttler, "throttler");
+      return this;
+    }
+
+    public Builder setEvictionListener(
+        @Nullable EvictionListener<RouteLookupRequest, CacheEntry> evictionListener) {
+      this.evictionListener = evictionListener;
+      return this;
+    }
+
+    public Builder setHelper(Helper helper) {
+      this.helper = checkNotNull(helper, "helper");
+      return this;
+    }
+
+    public Builder setLbPolicyConfig(LbPolicyConfiguration lbPolicyConfig) {
+      this.lbPolicyConfig = checkNotNull(lbPolicyConfig, "lbPolicyConfig");
+      return this;
+    }
+
+    /**
+     * Sets a factory to create {@link ResolvedAddresses} for child load balancer.
+     */
+    public Builder setChildLbResolvedAddressesFactory(
+        ChildLbResolvedAddressFactory childLbResolvedAddressFactory) {
+      this.childLbResolvedAddressFactory =
+          checkNotNull(childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
+      return this;
+    }
+
+    public Builder setBackoffProvider(BackoffPolicy.Provider provider) {
+      this.backoffProvider = checkNotNull(provider, "provider");
+      return this;
+    }
+
+    public Builder refreshBackoffEntries() {
+      this.refreshBackoffEntries = true;
+      return this;
+    }
+
+    public AsyncCachingRlsClient build() {
+      return new AsyncCachingRlsClient(this);
+    }
+
+    public Builder setTarget(String lookupService) {
+      this.target = checkNotNull(lookupService, "lookupService");
+      return this;
     }
   }
 
@@ -867,7 +864,7 @@ public final class AsyncCachingRlsClient {
       String[] methodName = args.getMethodDescriptor().getFullMethodName().split("/", 2);
       RouteLookupRequest request =
           requestFactory.create(methodName[0], methodName[1], args.getHeaders());
-      final CachedResponse response = AsyncCachingRlsClient.this.get(request);
+      final CachedRouteLookupResponse response = AsyncCachingRlsClient.this.get(request);
 
       PickSubchannelArgs rlsAppliedArgs = getApplyRlsHeader(args, response);
       if (response.hasValidData()) {
@@ -897,7 +894,7 @@ public final class AsyncCachingRlsClient {
       }
     }
 
-    private PickSubchannelArgs getApplyRlsHeader(PickSubchannelArgs args, CachedResponse response) {
+    private PickSubchannelArgs getApplyRlsHeader(PickSubchannelArgs args, CachedRouteLookupResponse response) {
       if (response.getHeaderData() == null || response.getHeaderData().isEmpty()) {
         return args;
       }
@@ -992,6 +989,12 @@ public final class AsyncCachingRlsClient {
             }
           });
       return readyLatch;
+    }
+
+    void close() {
+      if (fallbackChildPolicyWrapper != null) {
+        fallbackChildPolicyWrapper.release();
+      }
     }
   }
 }

@@ -41,8 +41,6 @@ final class RlsLoadBalancer extends LoadBalancer {
   private LbPolicyConfiguration lbPolicyConfiguration;
   @Nullable
   private AsyncCachingRlsClient routeLookupClient;
-  @Nullable
-  private ManagedChannel rlsServerChannel;
 
   RlsLoadBalancer(Helper helper) {
     this.helper = checkNotNull(helper, "helper");
@@ -62,18 +60,14 @@ final class RlsLoadBalancer extends LoadBalancer {
         if (routeLookupClient != null) {
           routeLookupClient.close();
         }
-        if (rlsServerChannel != null) {
-          rlsServerChannel.shutdown();
-        }
 
-        rlsServerChannel = helper.createResolvingOobChannel(rlsConfig.getLookupService());
+        //TODO rename the rls client
         AdaptiveThrottler throttler = AdaptiveThrottler.builder().build();
         ChildLbResolvedAddressFactory childLbResolvedAddressFactory =
             new ChildLbResolvedAddressFactory(
                 resolvedAddresses.getAddresses(), resolvedAddresses.getAttributes());
         AsyncCachingRlsClient.Builder rlsClientBuilder = AsyncCachingRlsClient.newBuilder()
             .setChildLbResolvedAddressesFactory(childLbResolvedAddressFactory)
-            .setChannel(rlsServerChannel)
             .setMaxAgeNanos(TimeUnit.MILLISECONDS.toNanos(rlsConfig.getMaxAgeInMillis()))
             .setStaleAgeNanos(TimeUnit.MILLISECONDS.toNanos(rlsConfig.getStaleAgeInMillis()))
             .setCallTimeoutNanos(
@@ -81,6 +75,7 @@ final class RlsLoadBalancer extends LoadBalancer {
             .setMaxCacheSizeBytes(rlsConfig.getCacheSizeBytes())
             .setThrottler(throttler)
             .setHelper(helper)
+            .setTarget(rlsConfig.getLookupService())
             .setLbPolicyConfig(lbPolicyConfiguration);
         if (rlsConfig.getRequestProcessingStrategy()
             == RequestProcessingStrategy.SYNC_LOOKUP_CLIENT_SEES_ERROR) {
@@ -97,9 +92,7 @@ final class RlsLoadBalancer extends LoadBalancer {
 
   @Override
   public void requestConnection() {
-    if (rlsServerChannel != null) {
-      rlsServerChannel.getState(true);
-    }
+    // ask async client
   }
 
   @Override
@@ -111,9 +104,6 @@ final class RlsLoadBalancer extends LoadBalancer {
 
   @Override
   public void shutdown() {
-    if (rlsServerChannel != null) {
-      rlsServerChannel.shutdown();
-    }
     if (routeLookupClient != null) {
       routeLookupClient.close();
     }
