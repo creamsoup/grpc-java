@@ -115,7 +115,6 @@ final class ManagedChannelImpl extends ManagedChannel implements
 
   static final long IDLE_TIMEOUT_MILLIS_DISABLE = -1;
 
-  @VisibleForTesting
   static final long SUBCHANNEL_SHUTDOWN_DELAY_SECONDS = 5;
 
   @VisibleForTesting
