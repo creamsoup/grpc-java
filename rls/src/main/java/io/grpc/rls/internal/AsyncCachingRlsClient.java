@@ -212,6 +212,7 @@ public final class AsyncCachingRlsClient {
     synchronized (lock) {
       // all childPolicyWrapper will be returned via AutoCleaningEvictionListener
       linkedHashLruCache.close();
+      channel.shutdown();
     }
   }
 
