@@ -33,7 +33,9 @@ import javax.annotation.Nullable;
 
 /**
  * A delegating {@link io.grpc.LoadBalancer.Helper} maintains status of {@link ChildPolicyWrapper}
- * when {@link Subchannel} status changed.
+ * when {@link Subchannel} status changed. This helper is used between child policy and parent
+ * load-balancer where each picker in child policy is governed by a governing picker. The governing
+ * picker will be reported back to the parent load-balancer.
  */
 class ChildPolicyReportingHelper extends ForwardingLoadBalancerHelper {
 
