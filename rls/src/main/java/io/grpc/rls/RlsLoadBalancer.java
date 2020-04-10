@@ -20,15 +20,12 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import io.grpc.ChannelLogger.ChannelLogLevel;
 import io.grpc.LoadBalancer;
-import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.rls.internal.AdaptiveThrottler;
 import io.grpc.rls.internal.AsyncCachingRlsClient;
 import io.grpc.rls.internal.ChildLbResolvedAddressFactory;
 import io.grpc.rls.internal.LbPolicyConfiguration;
-import io.grpc.rls.internal.RlsProtoData.RequestProcessingStrategy;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
-import java.util.concurrent.TimeUnit;
 import javax.annotation.Nullable;
 
 /**
@@ -62,26 +59,15 @@ final class RlsLoadBalancer extends LoadBalancer {
         }
 
         //TODO rename the rls client
-        AdaptiveThrottler throttler = AdaptiveThrottler.builder().build();
-        ChildLbResolvedAddressFactory childLbResolvedAddressFactory =
-            new ChildLbResolvedAddressFactory(
-                resolvedAddresses.getAddresses(), resolvedAddresses.getAttributes());
-        AsyncCachingRlsClient.Builder rlsClientBuilder = AsyncCachingRlsClient.newBuilder()
-            .setChildLbResolvedAddressesFactory(childLbResolvedAddressFactory)
-            .setMaxAgeNanos(TimeUnit.MILLISECONDS.toNanos(rlsConfig.getMaxAgeInMillis()))
-            .setStaleAgeNanos(TimeUnit.MILLISECONDS.toNanos(rlsConfig.getStaleAgeInMillis()))
-            .setCallTimeoutNanos(
-                TimeUnit.MILLISECONDS.toNanos(rlsConfig.getLookupServiceTimeoutInMillis()))
-            .setMaxCacheSizeBytes(rlsConfig.getCacheSizeBytes())
-            .setThrottler(throttler)
+        routeLookupClient = AsyncCachingRlsClient.newBuilder()
             .setHelper(helper)
-            .setTarget(rlsConfig.getLookupService())
-            .setLbPolicyConfig(lbPolicyConfiguration);
-        if (rlsConfig.getRequestProcessingStrategy()
-            == RequestProcessingStrategy.SYNC_LOOKUP_CLIENT_SEES_ERROR) {
-          rlsClientBuilder.refreshBackoffEntries();
-        }
-        routeLookupClient = rlsClientBuilder.build();
+            .setRlsConfig(rlsConfig)
+            .setLbPolicyConfig(lbPolicyConfiguration)
+            .setThrottler(AdaptiveThrottler.builder().build())
+            .setChildLbResolvedAddressesFactory(
+                new ChildLbResolvedAddressFactory(
+                    resolvedAddresses.getAddresses(), resolvedAddresses.getAttributes()))
+            .build();
       }
       // TODO(creamsoup) update configs if necessary, for v1 implementation this is not required.
       this.lbPolicyConfiguration = lbPolicyConfiguration;
@@ -92,7 +78,7 @@ final class RlsLoadBalancer extends LoadBalancer {
 
   @Override
   public void requestConnection() {
-    // ask async client
+    routeLookupClient.requestConnection();
   }
 
   @Override

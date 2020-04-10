@@ -50,6 +50,7 @@ import io.grpc.rls.internal.LruCache.EvictionListener;
 import io.grpc.rls.internal.LruCache.EvictionType;
 import io.grpc.rls.internal.RlsProtoConverters.RouteLookupResponseConverter;
 import io.grpc.rls.internal.RlsProtoData.RequestProcessingStrategy;
+import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupRequest;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupResponse;
 import io.grpc.rls.internal.Throttler.ThrottledException;
@@ -118,34 +119,42 @@ public final class AsyncCachingRlsClient {
     helper = checkNotNull(builder.helper, "helper");
     scheduledExecutorService = helper.getScheduledExecutorService();
     synchronizationContext = helper.getSynchronizationContext();
-    checkState(builder.maxAgeNanos > 0, "maxAgeNanos should be positive");
-    checkState(builder.staleAgeNanos > 0, "staleAgeNanos should be positive");
+    RouteLookupConfig rlsConfig = checkNotNull(builder.rlsConfig, "rlsConfig");
+    checkState(rlsConfig.getMaxAgeInMillis() > 0L, "maxAgeMillis should be positive");
+    checkState(rlsConfig.getStaleAgeInMillis() > 0L, "staleAgeMillis should be positive");
     checkState(
-        builder.maxAgeNanos >= builder.staleAgeNanos,
-        "maxAgeNanos should be greater than equals to staleAgeMillis");
-    checkState(builder.callTimeoutNanos > 0, "callTimeoutNanos should be positive");
-    maxAgeNanos = builder.maxAgeNanos;
-    staleAgeNanos = builder.staleAgeNanos;
-    callTimeoutNanos = builder.callTimeoutNanos;
+        rlsConfig.getMaxAgeInMillis() >= rlsConfig.getStaleAgeInMillis(),
+        "maxAgeMillis should be greater than equals to staleAgeMillis");
+    checkState(
+        rlsConfig.getLookupServiceTimeoutInMillis() > 0L,
+        "getLookupServiceTimeoutInMillis should be positive");
+    maxAgeNanos = TimeUnit.MILLISECONDS.toNanos(rlsConfig.getMaxAgeInMillis());
+    staleAgeNanos = TimeUnit.MILLISECONDS.toNanos(rlsConfig.getStaleAgeInMillis());
+    callTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(rlsConfig.getLookupServiceTimeoutInMillis());
     timeProvider = checkNotNull(builder.timeProvider, "timeProvider");
     throttler = checkNotNull(builder.throttler, "throttler");
     linkedHashLruCache =
         new RlsAsyncLruCache(
-            builder.maxCacheSizeBytes,
+            rlsConfig.getCacheSizeBytes(),
             builder.evictionListener,
             scheduledExecutorService,
             timeProvider);
     lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
     RlsRequestFactory requestFactory = new RlsRequestFactory(lbPolicyConfig.getRouteLookupConfig());
     rlsPicker = new RlsPicker(requestFactory);
-    rlsChannel = helper.createResolvingOobChannel(builder.target);
+    rlsChannel = helper.createResolvingOobChannel(builder.rlsConfig.getLookupService());
     rlsStub = RouteLookupServiceGrpc.newStub(rlsChannel);
     childLbResolvedAddressFactory =
         checkNotNull(builder.childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
     backoffProvider = builder.backoffProvider;
     childLbHelperProvider =
         new ChildLoadBalancerHelperProvider(helper, subchannelStateManager, rlsPicker);
-    childLbStatusListener = builder.refreshBackoffEntries ? new BackoffRefreshListener() : null;
+    if (rlsConfig.getRequestProcessingStrategy()
+        == RequestProcessingStrategy.SYNC_LOOKUP_CLIENT_SEES_ERROR) {
+      childLbStatusListener = new BackoffRefreshListener();
+    } else {
+      childLbStatusListener = null;
+    }
   }
 
   @CheckReturnValue
@@ -248,6 +257,10 @@ public final class AsyncCachingRlsClient {
         }
       }
     }
+  }
+
+  public void requestConnection() {
+    rlsChannel.getState(true);
   }
 
   /** Viewer class for cached {@link RouteLookupResponse}. */
@@ -651,62 +664,31 @@ public final class AsyncCachingRlsClient {
   public static final class Builder {
 
     private Helper helper;
+    private RouteLookupConfig rlsConfig;
     private LbPolicyConfiguration lbPolicyConfig;
-    private long maxCacheSizeBytes = 100 * 1024 * 1024; // 100 MB
-    private long maxAgeNanos = TimeUnit.MINUTES.toNanos(5);
-    private long staleAgeNanos = TimeUnit.MINUTES.toNanos(3);
-    private long callTimeoutNanos = TimeUnit.SECONDS.toNanos(5);
-    private TimeProvider timeProvider = TimeProvider.SYSTEM_TIME_PROVIDER;
     private Throttler throttler = new HappyThrottler();
-    private EvictionListener<RouteLookupRequest, CacheEntry> evictionListener = null;
     private ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
+    private TimeProvider timeProvider = TimeProvider.SYSTEM_TIME_PROVIDER;
+    private EvictionListener<RouteLookupRequest, CacheEntry> evictionListener;
     private BackoffPolicy.Provider backoffProvider = new ExponentialBackoffPolicy.Provider();
-    private boolean refreshBackoffEntries = false;
-    private String target;
-
-    public Builder setMaxCacheSizeBytes(long maxCacheSizeBytes) {
-      this.maxCacheSizeBytes = maxCacheSizeBytes;
-      return this;
-    }
-
-    public Builder setMaxAgeNanos(long maxAgeNanos) {
-      this.maxAgeNanos = maxAgeNanos;
-      return this;
-    }
-
-    public Builder setStaleAgeNanos(long staleAgeNanos) {
-      this.staleAgeNanos = staleAgeNanos;
-      return this;
-    }
-
-    public Builder setCallTimeoutNanos(long callTimeoutNanos) {
-      this.callTimeoutNanos = callTimeoutNanos;
-      return this;
-    }
-
-    public Builder setTimeProvider(TimeProvider timeProvider) {
-      this.timeProvider = checkNotNull(timeProvider, "timeProvider");
-      return this;
-    }
-
-    public Builder setThrottler(Throttler throttler) {
-      this.throttler = checkNotNull(throttler, "throttler");
-      return this;
-    }
-
-    public Builder setEvictionListener(
-        @Nullable EvictionListener<RouteLookupRequest, CacheEntry> evictionListener) {
-      this.evictionListener = evictionListener;
-      return this;
-    }
 
     public Builder setHelper(Helper helper) {
       this.helper = checkNotNull(helper, "helper");
       return this;
     }
 
+    public Builder setRlsConfig(RouteLookupConfig rlsConfig) {
+      this.rlsConfig = checkNotNull(rlsConfig, "rlsConfig");
+      return this;
+    }
+
     public Builder setLbPolicyConfig(LbPolicyConfiguration lbPolicyConfig) {
       this.lbPolicyConfig = checkNotNull(lbPolicyConfig, "lbPolicyConfig");
+      return this;
+    }
+
+    public Builder setThrottler(Throttler throttler) {
+      this.throttler = checkNotNull(throttler, "throttler");
       return this;
     }
 
@@ -720,23 +702,24 @@ public final class AsyncCachingRlsClient {
       return this;
     }
 
+    public Builder setTimeProvider(TimeProvider timeProvider) {
+      this.timeProvider = checkNotNull(timeProvider, "timeProvider");
+      return this;
+    }
+
+    public Builder setEvictionListener(
+        @Nullable EvictionListener<RouteLookupRequest, CacheEntry> evictionListener) {
+      this.evictionListener = evictionListener;
+      return this;
+    }
+
     public Builder setBackoffProvider(BackoffPolicy.Provider provider) {
       this.backoffProvider = checkNotNull(provider, "provider");
       return this;
     }
 
-    public Builder refreshBackoffEntries() {
-      this.refreshBackoffEntries = true;
-      return this;
-    }
-
     public AsyncCachingRlsClient build() {
       return new AsyncCachingRlsClient(this);
-    }
-
-    public Builder setTarget(String lookupService) {
-      this.target = checkNotNull(lookupService, "lookupService");
-      return this;
     }
   }
 
