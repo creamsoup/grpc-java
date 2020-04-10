@@ -22,7 +22,7 @@ import io.grpc.ChannelLogger.ChannelLogLevel;
 import io.grpc.LoadBalancer;
 import io.grpc.Status;
 import io.grpc.rls.internal.AdaptiveThrottler;
-import io.grpc.rls.internal.AsyncCachingRlsClient;
+import io.grpc.rls.internal.CachingRlsLbClient;
 import io.grpc.rls.internal.ChildLbResolvedAddressFactory;
 import io.grpc.rls.internal.LbPolicyConfiguration;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
@@ -37,7 +37,7 @@ final class RlsLoadBalancer extends LoadBalancer {
   @Nullable
   private LbPolicyConfiguration lbPolicyConfiguration;
   @Nullable
-  private AsyncCachingRlsClient routeLookupClient;
+  private CachingRlsLbClient routeLookupClient;
 
   RlsLoadBalancer(Helper helper) {
     this.helper = checkNotNull(helper, "helper");
@@ -59,7 +59,7 @@ final class RlsLoadBalancer extends LoadBalancer {
         }
 
         //TODO rename the rls client
-        routeLookupClient = AsyncCachingRlsClient.newBuilder()
+        routeLookupClient = CachingRlsLbClient.newBuilder()
             .setHelper(helper)
             .setRlsConfig(rlsConfig)
             .setLbPolicyConfig(lbPolicyConfiguration)

@@ -67,7 +67,7 @@ import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
 
 /**
- * An AsyncRlsCache is a cache for rls service. All the methods in this class are non blocking.
+ * A CachingRlsLbClient is a cache for rls service. All the methods in this class are non blocking.
  * This async behavior is reflected to the {@link #get(RouteLookupRequest)} method, when the cache
  * is requested but not fully populated, it returns uncompleted {@link ListenableFuture} which
  * allows the users to wait or ignore until the computation is completed.
@@ -78,7 +78,7 @@ import javax.annotation.concurrent.ThreadSafe;
  */
 // TODO(creamsoup) revisit javadoc
 @ThreadSafe
-public final class AsyncCachingRlsClient {
+public final class CachingRlsLbClient {
 
   private static final Converter<RouteLookupRequest, io.grpc.lookup.v1.RouteLookupRequest>
       reqConverter = new RlsProtoConverters.RouteLookupRequestConverter().reverse();
@@ -115,7 +115,7 @@ public final class AsyncCachingRlsClient {
   private final ChildLbStatusListener childLbStatusListener;
   private final SubchannelStateManager subchannelStateManager = new SubchannelStateManagerImpl();
 
-  AsyncCachingRlsClient(Builder builder) {
+  CachingRlsLbClient(Builder builder) {
     helper = checkNotNull(builder.helper, "helper");
     scheduledExecutorService = helper.getScheduledExecutorService();
     synchronizationContext = helper.getSynchronizationContext();
@@ -655,12 +655,12 @@ public final class AsyncCachingRlsClient {
     }
   }
 
-  /** Returns a Builder for {@link AsyncCachingRlsClient}. */
+  /** Returns a Builder for {@link CachingRlsLbClient}. */
   public static Builder newBuilder() {
     return new Builder();
   }
 
-  /** A Builder for {@link AsyncCachingRlsClient}. */
+  /** A Builder for {@link CachingRlsLbClient}. */
   public static final class Builder {
 
     private Helper helper;
@@ -718,8 +718,8 @@ public final class AsyncCachingRlsClient {
       return this;
     }
 
-    public AsyncCachingRlsClient build() {
-      return new AsyncCachingRlsClient(this);
+    public CachingRlsLbClient build() {
+      return new CachingRlsLbClient(this);
     }
   }
 
@@ -847,7 +847,7 @@ public final class AsyncCachingRlsClient {
       String[] methodName = args.getMethodDescriptor().getFullMethodName().split("/", 2);
       RouteLookupRequest request =
           requestFactory.create(methodName[0], methodName[1], args.getHeaders());
-      final CachedRouteLookupResponse response = AsyncCachingRlsClient.this.get(request);
+      final CachedRouteLookupResponse response = CachingRlsLbClient.this.get(request);
 
       PickSubchannelArgs rlsAppliedArgs = getApplyRlsHeader(args, response);
       if (response.hasValidData()) {
