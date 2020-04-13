@@ -858,11 +858,11 @@ public final class CachingRlsLbClient {
           case CONNECTING:
             return PickResult.withNoResult();
           case IDLE:
+            // fall through
+          case READY:
             if (childPolicyWrapper.getPicker() == null) {
               return PickResult.withNoResult();
             }
-            // fall through
-          case READY:
             return childPolicyWrapper.getPicker().pickSubchannel(rlsAppliedArgs);
           case TRANSIENT_FAILURE:
             return handleError(rlsAppliedArgs, Status.INTERNAL);
@@ -877,7 +877,8 @@ public final class CachingRlsLbClient {
       }
     }
 
-    private PickSubchannelArgs getApplyRlsHeader(PickSubchannelArgs args, CachedRouteLookupResponse response) {
+    private PickSubchannelArgs getApplyRlsHeader(
+        PickSubchannelArgs args, CachedRouteLookupResponse response) {
       if (response.getHeaderData() == null || response.getHeaderData().isEmpty()) {
         return args;
       }
@@ -932,11 +933,11 @@ public final class CachingRlsLbClient {
               PickResult
                   .withError(fallbackChildPolicyWrapper.getConnectivityStateInfo().getStatus());
         case IDLE:
+          // fall through
+        case READY:
           if (picker == null) {
             return PickResult.withNoResult();
           }
-          // fall through
-        case READY:
           return picker.pickSubchannel(args);
         default:
           throw new AssertionError();
