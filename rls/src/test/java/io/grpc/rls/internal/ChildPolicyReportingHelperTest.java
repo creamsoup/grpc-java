@@ -36,6 +36,7 @@ import io.grpc.rls.internal.ChildLoadBalancerHelper.ChildLoadBalancerHelperProvi
 import io.grpc.rls.internal.ChildPolicyReportingHelper.ChildLbStatusListener;
 import io.grpc.rls.internal.LbPolicyConfiguration.ChildPolicyWrapper;
 import java.net.SocketAddress;
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -53,6 +54,11 @@ public class ChildPolicyReportingHelperTest {
   private final ChildLbStatusListener childLbStatusListener = mock(ChildLbStatusListener.class);
   private final ChildPolicyReportingHelper childPolicyReportingHelper =
       new ChildPolicyReportingHelper(helperProvider, childPolicyWrapper, childLbStatusListener);
+
+  @After
+  public void tearDown() throws Exception {
+    childPolicyWrapper.release();
+  }
 
   @Test
   public void subchannelStateChange_updateChildPolicyWrapper() {
@@ -75,7 +81,6 @@ public class ChildPolicyReportingHelperTest {
 
     assertThat(childPolicyWrapper.getConnectivityStateInfo())
         .isEqualTo(ConnectivityStateInfo.forNonError(ConnectivityState.CONNECTING));
-    verify(helper).updateBalancingState(ConnectivityState.CONNECTING, picker);
   }
 
   @Test
@@ -96,7 +101,6 @@ public class ChildPolicyReportingHelperTest {
 
     @Override
     public void start(SubchannelStateListener listener) {
-      super.start(listener);
       this.listener = listener;
     }
 
