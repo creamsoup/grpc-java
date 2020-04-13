@@ -1048,8 +1048,6 @@ public abstract class LoadBalancer {
      * <p>The LoadBalancer is responsible for closing unused OOB channels, and closing all OOB
      * channels within {@link #shutdown}.
      *
-     * <P>NOT IMPLEMENTED: this method is currently a stub and not yet implemented by gRPC.
-     *
      * @since 1.20.0
      */
     public ManagedChannel createResolvingOobChannel(String target) {

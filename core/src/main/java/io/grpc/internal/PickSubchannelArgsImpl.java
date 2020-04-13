@@ -33,7 +33,8 @@ public final class PickSubchannelArgsImpl extends PickSubchannelArgs {
   /**
    * Creates call args object for given method with its call options, metadata.
    */
-  public PickSubchannelArgsImpl(MethodDescriptor<?, ?> method, Metadata headers, CallOptions callOptions) {
+  public PickSubchannelArgsImpl(
+      MethodDescriptor<?, ?> method, Metadata headers, CallOptions callOptions) {
     this.method = checkNotNull(method, "method");
     this.headers = checkNotNull(headers, "headers");
     this.callOptions = checkNotNull(callOptions, "callOptions");

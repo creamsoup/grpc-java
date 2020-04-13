@@ -673,12 +673,6 @@ final class ManagedChannelImpl extends ManagedChannel implements
       }
       handleServiceConfigUpdate();
     }
-    System.out.println(
-        "Creating new ManagedChannelImpl for target: " + builder.target
-            + " with authority " + builder.authorityOverride
-            + " nameResolverServiceAuthority: " + nameResolver.getServiceAuthority()
-            + " defaultServiceConfig: " + builder.defaultServiceConfig
-            + " defaultLbPolicy: " + builder.defaultLbPolicy);
   }
 
   // May only be called in constructor or syncContext
@@ -966,6 +960,7 @@ final class ManagedChannelImpl extends ManagedChannel implements
         channelStateManager.notifyWhenStateChanged(callback, executor, source);
       }
     }
+
     syncContext.execute(new NotifyStateChanged());
   }
 
@@ -1099,7 +1094,6 @@ final class ManagedChannelImpl extends ManagedChannel implements
     @Override
     public AbstractSubchannel createSubchannel(
         List<EquivalentAddressGroup> addressGroups, Attributes attrs) {
-      System.out.println("Creating subchannel for address: " + addressGroups + " attrs: " + attrs);
       logWarningIfNotInSyncContext("createSubchannel()");
       // TODO(ejona): can we be even stricter? Like loadBalancer == null?
       checkNotNull(addressGroups, "addressGroups");
@@ -1128,7 +1122,6 @@ final class ManagedChannelImpl extends ManagedChannel implements
 
     @Override
     public AbstractSubchannel createSubchannel(CreateSubchannelArgs args) {
-      System.out.println("Creating subchannel new way: " + args);
       syncContext.throwIfNotInThisSynchronizationContext();
       return createSubchannelInternal(args);
     }
@@ -1191,7 +1184,6 @@ final class ManagedChannelImpl extends ManagedChannel implements
     @Override
     public ManagedChannel createOobChannel(EquivalentAddressGroup addressGroup, String authority) {
       // TODO(ejona): can we be even stricter? Like terminating?
-      System.out.println("Creating obb channel: " + addressGroup + " authority: " + authority);
       checkState(!terminated, "Channel is terminated");
       long oobChannelCreationTime = timeProvider.currentTimeNanos();
       InternalLogId oobLogId = InternalLogId.allocate("OobChannel", /*details=*/ null);
@@ -1270,12 +1262,9 @@ final class ManagedChannelImpl extends ManagedChannel implements
 
     @Override
     public ManagedChannel createResolvingOobChannel(String target) {
-      System.out.println("Creating resolving oob channel: " + target);
-      final class ResolvingOobChannelBuilder extends AbstractManagedChannelImplBuilder<ResolvingOobChannelBuilder> {
+      final class ResolvingOobChannelBuilder
+          extends AbstractManagedChannelImplBuilder<ResolvingOobChannelBuilder> {
         int defaultPort = -1;
-        @SuppressWarnings("HidingField") // superclass defined it as private
-        NameResolverRegistry nameResolverRegistry;
-        NameResolver.Factory nameResolverFactory;
 
         ResolvingOobChannelBuilder(String target) {
           super(target);
@@ -1284,11 +1273,6 @@ final class ManagedChannelImpl extends ManagedChannel implements
         @Override
         protected ObjectPool<? extends Executor> getOffloadExecutorPool() {
           return super.getOffloadExecutorPool();
-        }
-
-        @Override
-        Factory getNameResolverFactory() {
-          return nameResolverFactory;
         }
 
         @Override
@@ -1302,13 +1286,14 @@ final class ManagedChannelImpl extends ManagedChannel implements
         }
       }
 
-      //TODO figure out what is need to be wrapped (e.g. transport factory?)
+      checkState(!terminated, "Channel is terminated");
+
       ResolvingOobChannelBuilder builder = new ResolvingOobChannelBuilder(target);
       builder.offloadExecutorPool = offloadExecutorHolder.pool;
+      builder.overrideAuthority(getAuthority());
+      builder.nameResolverFactory(nameResolverFactory);
       builder.executorPool = executorPool;
       builder.maxTraceEvents = maxTraceEvents;
-      builder.nameResolverRegistry = nameResolverRegistry;
-      builder.nameResolverFactory = nameResolverFactory;
       builder.proxyDetector = nameResolverArgs.getProxyDetector();
       builder.defaultPort = nameResolverArgs.getDefaultPort();
       builder.userAgent = userAgent;
