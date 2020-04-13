@@ -37,7 +37,7 @@ import javax.annotation.Nullable;
  * load-balancer where each picker in child policy is governed by a governing picker. The governing
  * picker will be reported back to the parent load-balancer.
  */
-class ChildPolicyReportingHelper extends ForwardingLoadBalancerHelper {
+final class ChildPolicyReportingHelper extends ForwardingLoadBalancerHelper {
 
   private final ChildLoadBalancerHelper delegate;
   private final ChildPolicyWrapper childPolicyWrapper;

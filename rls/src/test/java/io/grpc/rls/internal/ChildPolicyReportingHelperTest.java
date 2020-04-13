@@ -16,12 +16,14 @@
 
 package io.grpc.rls.internal;
 
+import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.grpc.Attributes;
 import io.grpc.ConnectivityState;
 import io.grpc.ConnectivityStateInfo;
 import io.grpc.EquivalentAddressGroup;
@@ -54,13 +56,14 @@ public class ChildPolicyReportingHelperTest {
 
   @Test
   public void subchannelStateChange_updateChildPolicyWrapper() {
-    Subchannel mockSubchannel = mock(Subchannel.class);
-    when(helper.createSubchannel(any(CreateSubchannelArgs.class))).thenReturn(mockSubchannel);
+    FakeSubchannel fakeSubchannel = new FakeSubchannel();
+    when(helper.createSubchannel(any(CreateSubchannelArgs.class))).thenReturn(fakeSubchannel);
     Subchannel subchannel =
-        childPolicyReportingHelper.createSubchannel(
-            CreateSubchannelArgs.newBuilder()
-                .setAddresses(new EquivalentAddressGroup(mock(SocketAddress.class)))
-                .build());
+        childPolicyReportingHelper
+            .createSubchannel(
+                CreateSubchannelArgs.newBuilder()
+                    .setAddresses(new EquivalentAddressGroup(mock(SocketAddress.class)))
+                    .build());
     subchannel.start(new SubchannelStateListener() {
       @Override
       public void onSubchannelState(ConnectivityStateInfo newState) {
@@ -68,9 +71,11 @@ public class ChildPolicyReportingHelperTest {
       }
     });
 
+    fakeSubchannel.updateState(ConnectivityStateInfo.forNonError(ConnectivityState.CONNECTING));
+
     assertThat(childPolicyWrapper.getConnectivityStateInfo())
-        .isEqualTo(ConnectivityStateInfo.forNonError(ConnectivityState.IDLE));
-    verify(childLbStatusListener).onStatusChanged(ConnectivityState.IDLE);
+        .isEqualTo(ConnectivityStateInfo.forNonError(ConnectivityState.CONNECTING));
+    verify(helper).updateBalancingState(ConnectivityState.CONNECTING, picker);
   }
 
   @Test
@@ -83,5 +88,32 @@ public class ChildPolicyReportingHelperTest {
     assertThat(childPolicyWrapper.getPicker()).isEqualTo(childPicker);
     // picker governs childPickers will be reported to parent LB
     verify(helper).updateBalancingState(ConnectivityState.READY, picker);
+  }
+
+  private static class FakeSubchannel extends Subchannel {
+
+    private SubchannelStateListener listener;
+
+    @Override
+    public void start(SubchannelStateListener listener) {
+      super.start(listener);
+      this.listener = listener;
+    }
+
+    void updateState(ConnectivityStateInfo newState) {
+      checkState(listener != null, "channel is not started yet");
+      listener.onSubchannelState(newState);
+    }
+
+    @Override
+    public void shutdown() {}
+
+    @Override
+    public void requestConnection() {}
+
+    @Override
+    public Attributes getAttributes() {
+      return null;
+    }
   }
 }
