@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 The gRPC Authors
+ * Copyright 2020 The gRPC Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,7 +55,7 @@ final class ChildLoadBalancerHelper extends ForwardingLoadBalancerHelper {
   /**
    * Updates balancing state from one or more subchannels tracked in the {@link
    * SubchannelStateManager}. The passed picker will be ignored, instead the picker which governs
-   * many subchannels/pickers will be reported to the higher load-balancer.
+   * many subchannels/pickers will be reported to the parent load-balancer.
    */
   @Override
   public void updateBalancingState(

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 The gRPC Authors
+ * Copyright 2020 The gRPC Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,6 @@ import io.grpc.rls.internal.RlsProtoData.NameMatcher;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupConfig;
 import io.grpc.rls.internal.RlsProtoData.RouteLookupRequest;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import javax.annotation.CheckReturnValue;
 
@@ -41,11 +40,13 @@ import javax.annotation.CheckReturnValue;
 final class RlsRequestFactory {
 
   private final String target;
-  // table of Path(serviceName.methodName or serviceName.*), rls request headerName, header fields
+  /**
+   * schema: Path(serviceName/methodName or serviceName/*), rls request headerName, header fields.
+   */
   private final Table<String, String, NameMatcher> keyBuilderTable;
 
   /** Constructor. */
-  RlsRequestFactory(RouteLookupConfig rlsConfig) {
+  public RlsRequestFactory(RouteLookupConfig rlsConfig) {
     checkNotNull(rlsConfig, "rlsConfig");
     this.target = rlsConfig.getLookupService();
     this.keyBuilderTable = createKeyBuilderTable(rlsConfig);
@@ -56,32 +57,23 @@ final class RlsRequestFactory {
     Table<String, String, NameMatcher> table = HashBasedTable.create();
     for (GrpcKeyBuilder grpcKeyBuilder : config.getGrpcKeyBuilders()) {
       for (NameMatcher nameMatcher : grpcKeyBuilder.getHeaders()) {
-        List<String> requestHeaders = nameMatcher.names();
         for (Name name : grpcKeyBuilder.getNames()) {
           String method =
-              (name.getMethod() == null || name.getMethod().isEmpty())
-                  ? "*"
-                  : name.getMethod();
+              name.getMethod() == null || name.getMethod().isEmpty()
+                  ? "*" : name.getMethod();
           String path = name.getService() + "/" + method;
-          table.put(
-              path,
-              nameMatcher.getKey(),
-              new NameMatcher(nameMatcher.getKey(), requestHeaders, nameMatcher.isOptional()));
+          table.put(path, nameMatcher.getKey(), nameMatcher);
         }
       }
     }
     return table;
   }
 
-  /** Creates an {@link RouteLookupRequest} for given request's metadata. */
+  /** Creates a {@link RouteLookupRequest} for given request's metadata. */
   @CheckReturnValue
-  RouteLookupRequest create(String service, String method, Metadata metadata) {
+  public RouteLookupRequest create(String service, String method, Metadata metadata) {
     checkNotNull(service, "service");
     checkNotNull(method, "method");
-    // removing leading '/'
-    if (method.charAt(0) == '/') {
-      method = method.substring(1);
-    }
     String path = service + "/" + method;
     Map<String, NameMatcher> keyBuilder = keyBuilderTable.row(path);
     // if no matching keyBuilder found, fall back to wildcard match (ServiceName/*)
