@@ -24,6 +24,7 @@ import io.grpc.LoadBalancer.PickSubchannelArgs;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
 
+/** Implementation of {@link PickSubchannelArgs}. */
 public final class PickSubchannelArgsImpl extends PickSubchannelArgs {
   private final CallOptions callOptions;
   private final Metadata headers;

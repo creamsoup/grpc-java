@@ -143,35 +143,8 @@ public final class FakeClock {
     }
 
     @Override public ScheduledFuture<?> scheduleAtFixedRate(
-        Runnable cmd, long initialDelay, long period, TimeUnit unit) {
-      ScheduledTask task =
-          new ScheduledTask(
-              currentTimeNanos + unit.toNanos(initialDelay),
-              new RepeatingRunnable(unit.toNanos(period), cmd));
-      scheduledTasks.add(task);
-      return task;
-    }
-
-    private class RepeatingRunnable implements Runnable {
-
-      private final Runnable cmd;
-      private final long delta;
-
-      public RepeatingRunnable(long delta, Runnable cmd) {
-        this.delta = delta;
-        this.cmd = cmd;
-      }
-
-      @Override
-      public void run() {
-        System.out.println("running!");
-        ScheduledTask task =
-            new ScheduledTask(
-                currentTimeNanos + delta,
-                new RepeatingRunnable(delta, cmd));
-        scheduledTasks.add(task);
-        cmd.run();
-      }
+        Runnable command, long initialDelay, long period, TimeUnit unit) {
+      throw new UnsupportedOperationException();
     }
 
     @Override public ScheduledFuture<?> scheduleWithFixedDelay(
