@@ -25,7 +25,7 @@ import io.grpc.LoadBalancer.ResolvedAddresses;
 import java.util.Collections;
 import java.util.List;
 
-/** Factory to created {@link io.grpc.LoadBalancer.ResolvedAddresses} passed to child lb. */
+/** Factory to create {@link io.grpc.LoadBalancer.ResolvedAddresses} from child load-balancers. */
 public final class ChildLbResolvedAddressFactory {
 
   private final List<EquivalentAddressGroup> addresses;
