@@ -64,7 +64,6 @@ import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
 import io.grpc.NameResolver;
 import io.grpc.NameResolver.ConfigOrError;
-import io.grpc.NameResolver.Factory;
 import io.grpc.NameResolver.ResolutionResult;
 import io.grpc.NameResolverRegistry;
 import io.grpc.ProxyDetector;
@@ -1268,11 +1267,6 @@ final class ManagedChannelImpl extends ManagedChannel implements
 
         ResolvingOobChannelBuilder(String target) {
           super(target);
-        }
-
-        @Override
-        protected ObjectPool<? extends Executor> getOffloadExecutorPool() {
-          return super.getOffloadExecutorPool();
         }
 
         @Override
