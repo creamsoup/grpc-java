@@ -119,7 +119,8 @@ public final class CachingRlsLbClient {
     helper = checkNotNull(builder.helper, "helper");
     scheduledExecutorService = helper.getScheduledExecutorService();
     synchronizationContext = helper.getSynchronizationContext();
-    RouteLookupConfig rlsConfig = checkNotNull(builder.rlsConfig, "rlsConfig");
+    lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
+    RouteLookupConfig rlsConfig = lbPolicyConfig.getRouteLookupConfig();
     checkState(rlsConfig.getMaxAgeInMillis() > 0L, "maxAgeMillis should be positive");
     checkState(rlsConfig.getStaleAgeInMillis() > 0L, "staleAgeMillis should be positive");
     checkState(
@@ -139,10 +140,9 @@ public final class CachingRlsLbClient {
             builder.evictionListener,
             scheduledExecutorService,
             timeProvider);
-    lbPolicyConfig = checkNotNull(builder.lbPolicyConfig, "lbPolicyConfig");
     RlsRequestFactory requestFactory = new RlsRequestFactory(lbPolicyConfig.getRouteLookupConfig());
     rlsPicker = new RlsPicker(requestFactory);
-    rlsChannel = helper.createResolvingOobChannel(builder.rlsConfig.getLookupService());
+    rlsChannel = helper.createResolvingOobChannel(rlsConfig.getLookupService());
     rlsStub = RouteLookupServiceGrpc.newStub(rlsChannel);
     childLbResolvedAddressFactory =
         checkNotNull(builder.childLbResolvedAddressFactory, "childLbResolvedAddressFactory");
@@ -664,7 +664,6 @@ public final class CachingRlsLbClient {
   public static final class Builder {
 
     private Helper helper;
-    private RouteLookupConfig rlsConfig;
     private LbPolicyConfiguration lbPolicyConfig;
     private Throttler throttler = new HappyThrottler();
     private ChildLbResolvedAddressFactory childLbResolvedAddressFactory;
@@ -674,11 +673,6 @@ public final class CachingRlsLbClient {
 
     public Builder setHelper(Helper helper) {
       this.helper = checkNotNull(helper, "helper");
-      return this;
-    }
-
-    public Builder setRlsConfig(RouteLookupConfig rlsConfig) {
-      this.rlsConfig = checkNotNull(rlsConfig, "rlsConfig");
       return this;
     }
 

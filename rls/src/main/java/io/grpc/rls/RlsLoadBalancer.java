@@ -60,7 +60,6 @@ final class RlsLoadBalancer extends LoadBalancer {
         }
         routeLookupClient = CachingRlsLbClient.newBuilder()
             .setHelper(helper)
-            .setRlsConfig(rlsConfig)
             .setLbPolicyConfig(lbPolicyConfiguration)
             .setThrottler(AdaptiveThrottler.builder().build())
             .setChildLbResolvedAddressesFactory(
