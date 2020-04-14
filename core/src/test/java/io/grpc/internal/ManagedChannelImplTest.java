@@ -3958,11 +3958,18 @@ public class ManagedChannelImplTest {
         .nameResolverFactory(new FakeNameResolverFactory.Builder(expectedUri, oobUri).build());
     createChannel();
 
-    ManagedChannel resolvedOobChannel = helper.createResolvingOobChannel(oobTarget);
+    ManagedChannel resolvedOobChannel = null;
+    try {
+      resolvedOobChannel = helper.createResolvingOobChannel(oobTarget);
 
-    assertWithMessage("resolving oob channel should have same authority")
-        .that(resolvedOobChannel.authority())
-        .isEqualTo(channel.authority());
+      assertWithMessage("resolving oob channel should have same authority")
+          .that(resolvedOobChannel.authority())
+          .isEqualTo(channel.authority());
+    } finally {
+      if (resolvedOobChannel != null) {
+        resolvedOobChannel.shutdownNow();
+      }
+    }
   }
 
   private static final class ChannelBuilder
