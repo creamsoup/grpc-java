@@ -19,6 +19,7 @@ package io.grpc.rls;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import io.grpc.ChannelLogger.ChannelLogLevel;
+import io.grpc.ConnectivityState;
 import io.grpc.LoadBalancer;
 import io.grpc.Status;
 import io.grpc.rls.internal.AdaptiveThrottler;
@@ -57,8 +58,6 @@ final class RlsLoadBalancer extends LoadBalancer {
         if (routeLookupClient != null) {
           routeLookupClient.close();
         }
-
-        //TODO rename the rls client
         routeLookupClient = CachingRlsLbClient.newBuilder()
             .setHelper(helper)
             .setRlsConfig(rlsConfig)
@@ -82,16 +81,26 @@ final class RlsLoadBalancer extends LoadBalancer {
   }
 
   @Override
-  public void handleNameResolutionError(Status error) {
-    //TODO tell childLb with update lb state error
-    System.out.println("!! resolution error" + error);
-    // helper.updateBalancingState(ConnectivityState.TRANSIENT_FAILURE, rlsPicker);
+  public void handleNameResolutionError(final Status error) {
+    class ErrorPicker extends SubchannelPicker {
+      @Override
+      public PickResult pickSubchannel(PickSubchannelArgs args) {
+        return PickResult.withError(error);
+      }
+    }
+    if (routeLookupClient != null) {
+      routeLookupClient.close();
+      routeLookupClient = null;
+      lbPolicyConfiguration = null;
+    }
+    helper.updateBalancingState(ConnectivityState.TRANSIENT_FAILURE, new ErrorPicker());
   }
 
   @Override
   public void shutdown() {
     if (routeLookupClient != null) {
       routeLookupClient.close();
+      routeLookupClient = null;
     }
   }
 }

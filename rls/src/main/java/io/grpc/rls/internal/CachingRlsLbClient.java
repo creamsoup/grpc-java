@@ -976,6 +976,7 @@ public final class CachingRlsLbClient {
     }
 
     void close() {
+      // TODO(creamsoup) possibly delay this release to avoid reconnect
       if (fallbackChildPolicyWrapper != null) {
         fallbackChildPolicyWrapper.release();
       }
